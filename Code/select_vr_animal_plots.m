@@ -1,6 +1,7 @@
 function select_vr_animal_plots(varargin)
 % SELECT_VR_ANIMAL_PLOTS
-% Main driver: processes behavior once per animal, then analyzes spikes per region
+% Main driver: processes behavior once per animal, then analyzes spikes per
+% region
 %
 % Key Options:
 %   'AnimalFolder'   : path to VR## folder (or '' to select via GUI)
