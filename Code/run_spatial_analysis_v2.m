@@ -4,18 +4,18 @@ function run_spatial_analysis_v2(animal_folder, kilo_folder, out_folder, varargi
 % - runs the spatial analysis using your existing speed threshold (no override)
 % - saves 3D 4 cm data structures (rates and counts)
 % - builds and saves unfiltered spike times for FSC (session-wide and by block)
-% - creates PDFs using your existing plotting pipeline
+% - optionally creates PDFs using your existing plotting pipeline (DoPlots flag)
 %
 % Usage:
 % run_spatial_analysis_v2(animal_folder, kilo_folder, out_folder)
-% run_spatial_analysis_v2(..., 'Blocks', {12:174, 178:337, 341:520}, 'SmoothingWin', 12)
+% run_spatial_analysis_v2(..., 'Blocks', {12:174, 178:337, 341:520}, 'SmoothingWin', 12, 'DoPlots', false)
 %
 % Inputs:
 % animal_folder : folder containing behavior artifacts (CSVtableRHDts_Nans.*)
 % kilo_folder   : folder containing spike_times.npy / spike_clusters.npy (region folder, e.g., PPC)
 % out_folder    : output folder for PDFs and MAT files
 %
-% Name-Value Overrides (optional; no speed threshold override here):
+% Name-Value Overrides:
 % 'Blocks'         : 1xB cell array of trial-index vectors per block (default: {12:174, 178:337, 341:520})
 % 'SmoothingWin'   : Gaussian sigma in cm for plotting (default: 12)
 % 'MinOccSec'      : minimum fast occupancy per bin in seconds (NaN bins below; default: 0.10)
@@ -25,6 +25,7 @@ function run_spatial_analysis_v2(animal_folder, kilo_folder, out_folder, varargi
 % 'TitlePrefix'    : prefix for plot titles (default: '[V2] ')
 % 'ShowTrialIDs'   : show trial IDs on plots (default: false)
 % 'RasterMarkerSize': marker size for rasters (default: 9)
+% 'DoPlots'        : whether to create V2 plots/PDF (default: false)
 
 % ---------------- Configuration with overrides ----------------
 cfg = struct();
@@ -37,6 +38,7 @@ cfg.PDFName           = 'AllUnits_SpatialAnalysis_V2.pdf';
 cfg.TitlePrefix       = '[V2] ';
 cfg.ShowTrialIDs      = false;
 cfg.RasterMarkerSize  = 9;
+cfg.DoPlots           = false;  % default: skip plots
 
 if ~isempty(varargin)
     p = inputParser;
@@ -49,6 +51,7 @@ if ~isempty(varargin)
     addParameter(p, 'TitlePrefix',    cfg.TitlePrefix, @(s)ischar(s)||isstring(s));
     addParameter(p, 'ShowTrialIDs',   cfg.ShowTrialIDs, @islogical);
     addParameter(p, 'RasterMarkerSize', cfg.RasterMarkerSize, @(x)isnumeric(x)&&isscalar(x)&&x>0);
+    addParameter(p, 'DoPlots',        cfg.DoPlots, @islogical);
     parse(p, varargin{:});
     cfg.Blocks           = p.Results.Blocks;
     cfg.SmoothingWin_cm  = p.Results.SmoothingWin;
@@ -59,6 +62,7 @@ if ~isempty(varargin)
     cfg.TitlePrefix      = char(p.Results.TitlePrefix);
     cfg.ShowTrialIDs     = p.Results.ShowTrialIDs;
     cfg.RasterMarkerSize = p.Results.RasterMarkerSize;
+    cfg.DoPlots          = p.Results.DoPlots;
 else
     cfg.BinEdges4cm = cfg.BinEdges4cm(:)'; % ensure row
 end
@@ -70,10 +74,9 @@ end
 if ~exist(out_folder, 'dir'), mkdir(out_folder); end
 
 % ---------------- Step 1: Behavior preprocessing (no override) ----------------
-% Use your existing process_behavioral_data as-is, with its internal speed threshold.
 [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] = process_behavioral_data(animal_folder);
 
-% Optional minimum-occupancy stabilization (fast-only bins from your function)
+% Optional minimum-occupancy stabilization
 if ~isempty(occupancy_4cm) && isfinite(cfg.MinOccSec) && cfg.MinOccSec > 0
     occ_mask = occupancy_4cm < cfg.MinOccSec;
     occupancy_4cm(occ_mask) = NaN;
@@ -90,7 +93,7 @@ Blocks = clip_blocks_to_trials(cfg.Blocks, numel(trans_beg));
 fprintf('[V2] Trials=%d, Bins(4cm)=%d, Units=%d\n', nTrials, nBins, nUnits);
 
 % ---------------- Step 3: Aggregate mean rates by trial type (session-wide and per-block) ----------------
-% Session-wide (keep for convenience)
+% Session-wide
 [RateMeansByType, TrialCountsByType] = compute_rate_means_by_type(rate_4cm_3D, halls);
 
 % Per-block averages (one [nUnits x nBins x 7] array per block)
@@ -106,16 +109,20 @@ counts4cm_3D = build_counts4cm_3D(raster_data, cfg.BinEdges4cm); % [trials x bin
     'SessionEnd', maxRHD_ts, ...
     'IncludePerTrial', true);
 
-% ---------------- Step 6: Create plots ----------------
-create_all_plots(rate_mean_halls, raster_data, halls, cluster_id_good, out_folder, ...
-    'Blocks', Blocks, ...
-    'BinEdges', cfg.BinEdges4cm, ...
-    'SmoothingWin', cfg.SmoothingWin_cm, ...
-    'SavePNGs', cfg.SavePNGs, ...
-    'PDFName', cfg.PDFName, ...
-    'TitlePrefix', cfg.TitlePrefix, ...
-    'ShowTrialIDs', cfg.ShowTrialIDs, ...
-    'RasterMarkerSize', cfg.RasterMarkerSize);
+% ---------------- Step 6: Create plots (optional) ----------------
+if cfg.DoPlots
+    create_all_plots(rate_mean_halls, raster_data, halls, cluster_id_good, out_folder, ...
+        'Blocks', Blocks, ...
+        'BinEdges', cfg.BinEdges4cm, ...
+        'SmoothingWin', cfg.SmoothingWin_cm, ...
+        'SavePNGs', cfg.SavePNGs, ...
+        'PDFName', cfg.PDFName, ...
+        'TitlePrefix', cfg.TitlePrefix, ...
+        'ShowTrialIDs', cfg.ShowTrialIDs, ...
+        'RasterMarkerSize', cfg.RasterMarkerSize);
+else
+    fprintf('[V2] Skipping plot creation (DoPlots=false)\n');
+end
 
 % ---------------- Step 7: Save outputs ----------------
 % Spatial analysis artifacts (fast-only)
@@ -135,9 +142,7 @@ fprintf('[V2] Done. Outputs saved in %s\n', out_folder);
 end
 
 % ==================== Local helpers ====================
-
 function BlocksOut = clip_blocks_to_trials(BlocksIn, nTrials)
-% Clip block indices to valid trial range
 BlocksOut = BlocksIn;
 for b = 1:numel(BlocksIn)
     bb = BlocksIn{b}(:);
@@ -147,10 +152,6 @@ end
 end
 
 function [RateMeansByType, TrialCountsByType] = compute_rate_means_by_type(rate_4cm_3D, halls)
-% Compute mean rates per trial type (1..7) from [trials x bins x units].
-% Outputs:
-% RateMeansByType   : [nUnits x nBins x 7]
-% TrialCountsByType : [1 x 7]
 nTypes = 7;
 [~, nBins, nUnits] = size(rate_4cm_3D);
 RateMeansByType = NaN(nUnits, nBins, nTypes);
@@ -166,9 +167,6 @@ end
 end
 
 function counts4cm_3D = build_counts4cm_3D(raster_data, BinEdges4cm)
-% Build 3D 4 cm spike counts from fast-only raster_data.
-% Output:
-% counts4cm_3D : [nTrials x nBins x nUnits] (double)
 BinEdges4cm = BinEdges4cm(:)';
 nBins   = numel(BinEdges4cm) - 1;
 nUnits  = size(raster_data, 1);
@@ -188,31 +186,6 @@ end
 
 function [spikes_all_session, spikes_by_block, block_windows, unit_summary, spikes_by_trial] = ...
     build_unfiltered_spike_times(KiloFolder, cluster_id_good, trans_beg, trans_end, Blocks, maxRHD_ts, varargin)
-% BUILD_UNFILTERED_SPIKE_TIMES
-% Collects all spike times (no speed gating) for curated good units:
-% - across the behavioral session window
-% - broken out by block (union of trials in each block)
-% - optionally, per-trial breakout (absolute times)
-%
-% Inputs:
-% KiloFolder       : path to folder containing spike_times.npy / spike_clusters.npy
-% cluster_id_good  : [nUnits x 1] curated unit IDs
-% trans_beg        : [nTrials x 1] trial start times (seconds)
-% trans_end        : [nTrials x 1] trial end times (seconds)
-% Blocks           : 1xB cell, each a vector of trial indices for that block
-% maxRHD_ts        : scalar, maximum behavior timestamp (seconds)
-%
-% Name-Value Options:
-% 'SessionStart'   : default = min(trans_beg)
-% 'SessionEnd'     : default = maxRHD_ts
-% 'IncludePerTrial': true/false, also return per-trial spikes (default: true)
-%
-% Outputs:
-% spikes_all_session : {nUnits x 1} absolute spike times in [SessionStart, SessionEnd]
-% spikes_by_block    : {nUnits x nBlocks} absolute spike times for each block window
-% block_windows      : [nBlocks x 2] start/end times (seconds) computed from trials in each block
-% unit_summary       : struct with counts per unit (session, per-block, per-trial)
-% spikes_by_trial    : {nUnits x nTrials} absolute spike times per trial (if IncludePerTrial=true)
 
 p = inputParser;
 addParameter(p, 'SessionStart', [], @(x)isnumeric(x)&&isscalar(x));
@@ -224,11 +197,11 @@ opt = p.Results;
 if isempty(opt.SessionStart), opt.SessionStart = min(trans_beg(:)); end
 if isempty(opt.SessionEnd),   opt.SessionEnd   = maxRHD_ts;          end
 
-% ---------------- Load spikes ----------------
+% Load spikes
 Fs = 30000; % Hz
 try
     st_samp = double(readNPY(fullfile(KiloFolder,'spike_times.npy'))); % samples
-    sc_all  = double(readNPY(fullfile(KiloFolder,'spike_clusters.npy'))); % per-spike cluster id
+    sc_all  = double(readNPY(fullfile(KiloFolder,'spike_clusters.npy'))); % cluster ids
 catch ME
     error('build_unfiltered_spike_times:NPYReadFailed', 'Failed to read NPY files: %s', ME.message);
 end
@@ -239,7 +212,7 @@ session_mask = isfinite(st_s) & (st_s >= opt.SessionStart) & (st_s <= opt.Sessio
 st_s = st_s(session_mask);
 sc   = sc_all(session_mask);
 
-% ---------------- Prepare ----------------
+% Prepare
 nUnits  = numel(cluster_id_good);
 nTrials = numel(trans_beg);
 nBlocks = numel(Blocks);
@@ -251,7 +224,7 @@ else
     spikes_by_trial = {};
 end
 
-% Compute block windows from trial ranges
+% Block windows
 block_windows = nan(nBlocks, 2);
 for b = 1:nBlocks
     trials_b = Blocks{b}(:);
@@ -264,7 +237,7 @@ for b = 1:nBlocks
     block_windows(b,2) = max(trans_end(trials_b));
 end
 
-% ---------------- Collect spikes ----------------
+% Collect spikes
 unit_summary = struct();
 unit_summary.cluster_id_good = cluster_id_good(:);
 unit_summary.session_counts  = zeros(nUnits,1);
@@ -275,13 +248,13 @@ end
 
 for u = 1:nUnits
     cid = cluster_id_good(u);
-    ts_u = st_s(sc == cid); % all spikes for this unit within session window
+    ts_u = st_s(sc == cid); % spikes for unit within session window
 
     % Session-wide
     spikes_all_session{u} = ts_u(:);
     unit_summary.session_counts(u) = numel(ts_u);
 
-    % By block (absolute times)
+    % By block
     for b = 1:nBlocks
         t0 = block_windows(b,1);
         t1 = block_windows(b,2);
@@ -293,7 +266,7 @@ for u = 1:nUnits
         unit_summary.block_counts(u,b) = numel(spikes_by_block{u,b});
     end
 
-    % Optional: per-trial (absolute times)
+    % Per-trial (optional)
     if opt.IncludePerTrial
         for tr = 1:nTrials
             t0 = trans_beg(tr);
@@ -310,42 +283,23 @@ end
 end
 
 function [rate_mean_halls, counts, Blocks] = analyze_blocks(rate_4cm_3D, halls, varargin)
-% ANALYZE_BLOCKS
-% Computes block-wise averages of firing rates per trial type
-%
-% Inputs:
-% rate_4cm_3D : [nTrials x nBins x nUnits] firing rate data
-% halls       : [nTrials x 1] trial type codes (1-7)
-%
-% Options:
-% 'Blocks'    : {12:174, 178:337, 341:520} - trial blocks to analyze
-%
-% Outputs:
-% rate_mean_halls : {1 x nBlocks} cell of [nUnits x nBins x 7] averages
-% counts          : {1 x nBlocks} cell of [1 x 7] trial counts per type
-% Blocks          : validated block indices
-
 p = inputParser;
 addParameter(p, 'Blocks', {12:174, 178:337, 341:520}, @iscell);
 parse(p, varargin{:});
 Blocks = p.Results.Blocks;
 
-% Validate inputs
 [nTrials, nBins, nUnits] = size(rate_4cm_3D);
 halls = halls(:);
 if numel(halls) < nTrials
     halls = [halls; NaN(nTrials - numel(halls), 1)];
 end
 
-% Clip blocks to valid trial range
 Blocks = clip_blocks(Blocks, nTrials);
 nBlocks = numel(Blocks);
 
-% Initialize outputs
 rate_mean_halls = cell(1, nBlocks);
 counts          = cell(1, nBlocks);
 
-% Process each block
 for b = 1:nBlocks
     [rate_mean_halls{b}, counts{b}] = compute_block_averages(...
         rate_4cm_3D, halls, Blocks{b}, nUnits, nBins);
@@ -353,7 +307,6 @@ end
 end
 
 function Blocks = clip_blocks(Blocks, nTrials)
-% Clip block indices to valid trial range and remove invalid blocks
 valid_blocks = false(1, numel(Blocks));
 for b = 1:numel(Blocks)
     bb = Blocks{b}(:);
@@ -365,27 +318,20 @@ Blocks = Blocks(valid_blocks);
 end
 
 function [rate_mean, trial_counts] = compute_block_averages(rate_4cm_3D, halls, block_trials, nUnits, nBins)
-% Compute average firing rates per trial type for one block
 nTypes = 7;
 rate_mean    = NaN(nUnits, nBins, nTypes);
 trial_counts = zeros(1, nTypes);
 if isempty(block_trials), return; end
 
-% Get data for this block
 block_data  = rate_4cm_3D(block_trials, :, :); % [nBlockTrials x nBins x nUnits]
 block_halls = halls(block_trials);
 
-% Average per trial type
 for TT = 1:nTypes
     idx = (block_halls == TT);
     trial_counts(TT) = sum(idx);
     if trial_counts(TT) == 0, continue; end
-
-    % Extract trials of this type: [nTrialsOfType x nBins x nUnits]
     type_data = block_data(idx, :, :);
-    % Average across trials: [1 x nBins x nUnits]
     type_mean = mean(type_data, 1, 'omitnan');
-    % Reshape to [nUnits x nBins]
     rate_mean(:, :, TT) = squeeze(type_mean)';
 end
 end
