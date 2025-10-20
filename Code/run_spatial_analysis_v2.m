@@ -12,7 +12,7 @@ function run_spatial_analysis_v2(animal_folder, kilo_folder, out_folder, varargi
 % ---------------- Configuration with overrides ----------------
 cfg = struct();
 cfg.SmoothingWin_cm   = 12;
-cfg.MinOccSec         = 0.10;
+cfg.MinOccSec         = 0.0;
 cfg.BinEdges4cm       = 0:4:534;
 cfg.Blocks            = {12:174, 178:337, 341:520};
 cfg.SavePNGs          = false;
