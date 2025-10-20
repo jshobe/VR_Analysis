@@ -37,7 +37,7 @@ function select_vr_animal_plots(varargin)
     addParameter(p, 'SpeedThresh', 1.5, @(x)isnumeric(x)&&isscalar(x)&&x>=0);
     addParameter(p, 'MakeLegacyPlots', true, @islogical);
     % In the parser
-    addParameter(p, 'SaveFIGs', true, @islogical);
+    addParameter(p, 'SaveFIGs', , @islogical);
     addParameter(p, 'FIGDir', '', @(s)ischar(s)||isstring(s));
 
 
