@@ -27,7 +27,7 @@ function select_vr_animal_plots(varargin)
     addParameter(p, 'Overwrite', false, @islogical);
     addParameter(p, 'SaveIntermediates', true, @islogical);
     addParameter(p, 'FiguresVisible', 'off', @ischar);
-    addParameter(p, 'SmoothingWin', 8, @(x)isnumeric(x)&&x>=0); % in cm, not bins
+    addParameter(p, 'SmoothingWin', 1.33, @(x)isnumeric(x)&&x>=0); % in cm, not bins
     addParameter(p, 'SavePNGs', false, @islogical);
     addParameter(p, 'PDFName', 'AllUnits_SpatialAnalysis.pdf', @ischar);
     addParameter(p, 'PDFContent', 'image', @ischar);
@@ -37,8 +37,9 @@ function select_vr_animal_plots(varargin)
     addParameter(p, 'SpeedThresh', 1.5, @(x)isnumeric(x)&&isscalar(x)&&x>=0);
     addParameter(p, 'MakeLegacyPlots', true, @islogical);
     % In the parser
-    addParameter(p, 'SaveFIGs', , @islogical);
+    addParameter(p, 'SaveFIGs', false, @islogical);
     addParameter(p, 'FIGDir', '', @(s)ischar(s)||isstring(s));
+    addParameter(p, 'UseMedianSpeedMask', true, @(x)islogical(x)&&isscalar(x));   % NEW
 
 
     parse(p, varargin{:});
@@ -63,8 +64,8 @@ function select_vr_animal_plots(varargin)
     % Load or compute behavior (legacy cache path) with adjustable SpeedThresh
     [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] = ...
         load_behavior_data(animal_folder, derived_dir, opts.Overwrite, opts.SaveIntermediates, ...
-                           'SpeedThresh', opts.SpeedThresh);
-
+                          'SpeedThresh', opts.SpeedThresh, ...
+                        'UseMedianSpeedMask', opts.UseMedianSpeedMask);  % NEW
     % Process each region (legacy plots + V2 FSC/3D 4cm)
     for r = 1:numel(opts.Regions)
         region = opts.Regions{r};

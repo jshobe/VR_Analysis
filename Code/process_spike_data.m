@@ -4,31 +4,25 @@ function [rate_4cm_3D, raster_data, cluster_id_good] = process_spike_data( ...
 % Accurate spike processing with curated GoodUnit CSV, RS-sample speed gating, and 4 cm binning.
 %
 % Inputs:
-% KiloFolder     : path to region folder containing Kilosort outputs
-% interval_data  : 1xN cell array per trial with fields:
-%                  - ts_RS (seconds), ps_RS (cm) resampled uniformly
-% occupancy_4cm  : [nTrials x nBins] seconds per bin, NaN for low-speed bins
-% halls          : [nTrials x 1] trial type codes (unused here)
-% trans_beg      : [nTrials x 1] trial start times (seconds)
-% trans_end      : [nTrials x 1] trial end times (seconds)
-% maxRHD_ts      : maximum behavior timestamp to restrict spikes (seconds)
+%   KiloFolder     : path to region folder containing Kilosort outputs
+%   interval_data  : 1xN cell array per trial with fields:
+%                    - ts_RS (seconds), ps_RS (cm) resampled uniformly
+%   occupancy_4cm  : [nTrials x nBins] seconds per bin, NaN for invalid bins
+%   halls          : [nTrials x 1] trial type codes (unused here)
+%   trans_beg      : [nTrials x 1] trial start times (seconds)
+%   trans_end      : [nTrials x 1] trial end times (seconds)
+%   maxRHD_ts      : maximum behavior timestamp to restrict spikes (seconds)
 %
 % Name-Value options:
-% 'SpeedThresh'  : speed gate in cm/s for raster/fast-only rates (default: 2.5)
-% 'BinEdges4cm'  : spatial bin edges (default: 0:4:534)
+%   'SpeedThresh'  : speed gate in cm/s for raster/fast-only rates (default: 2.5)
+%   'BinEdges4cm'  : spatial bin edges (default: 0:4:534)
 %
 % Outputs:
-% rate_4cm_3D    : [nTrials x nBins x nUnits] firing rates (Hz), NaN for invalid bins
-% raster_data    : {nUnits x nTrials} cells with fields:
-%                  - times (seconds relative to trial start)
-%                  - positions (cm at RS samples for kept spikes)
-% cluster_id_good: [nUnits x 1] curated good unit IDs (CSV order preserved)
-%
-% Notes:
-% - Requires UnitMetrics/VR##_GoodUnitInfo.csv (first column = ClusterID).
-% - Raster gating uses instantaneous speed from gradient(ps_RS, ts_RS) > SpeedThresh.
-% - Rate maps bin raw spike positions into BinEdges4cm (default 4 cm bins).
-% - occupancy_4cm should be computed from fast RS samples and NaN-masked by bin median speed.
+%   rate_4cm_3D    : [nTrials x nBins x nUnits] firing rates (Hz), NaN for invalid bins
+%   raster_data    : {nUnits x nTrials} cells with fields:
+%                    - times (s relative to trial start)
+%                    - positions (cm at RS samples for kept spikes)
+%   cluster_id_good: [nUnits x 1] curated good unit IDs (CSV order preserved)
 
 % ---------------- Options ----------------
 p = inputParser;
@@ -40,7 +34,7 @@ opt = p.Results;
 % ---------------- Load spikes ----------------
 Fs = 30000; % Hz
 try
-    st_samp = double(readNPY(fullfile(KiloFolder,'spike_times.npy'))); % samples
+    st_samp = double(readNPY(fullfile(KiloFolder,'spike_times.npy')));     % samples
     sc_all  = double(readNPY(fullfile(KiloFolder,'spike_clusters.npy'))); % per-spike cluster id
 catch ME
     error('process_spike_data:NPYReadFailed', 'Failed to read NPY files: %s', ME.message);
@@ -52,13 +46,11 @@ mask_behavior = isfinite(st_s) & (st_s <= maxRHD_ts) & isfinite(sc_all);
 st_s = st_s(mask_behavior);
 sc   = sc_all(mask_behavior);
 
-% Drop noise cluster 0 if present
-sc(sc == 0) = [];
-sc_unique = unique(sc(:));
-if isempty(sc_unique)
-    warning('process_spike_data:NoSpikesInBehavior', 'No spikes within behavior window.');
-    rate_4cm_3D = []; raster_data = cell(0,0); cluster_id_good = [];
-    return;
+% Drop noise cluster 0 if present (keep arrays aligned)
+if ~isempty(sc)
+    keep_mask = (sc ~= 0);
+    st_s = st_s(keep_mask);
+    sc   = sc(keep_mask);
 end
 
 % ---------------- Read curated GoodUnit CSV ----------------
@@ -85,6 +77,7 @@ if ~exist(good_csv_path, 'file')
     error('process_spike_data:GoodCSVMissing', ...
         'Required curated good unit file not found: %s', good_csv_path);
 end
+
 try
     Tgood = readtable(good_csv_path);
 catch ME
@@ -107,6 +100,7 @@ if isempty(cluster_id_good)
 end
 
 % Keep only IDs that actually appear in spike_clusters within behavior window
+sc_unique = unique(sc(:));
 present_mask = ismember(cluster_id_good, sc_unique);
 cluster_id_good = cluster_id_good(present_mask);
 if isempty(cluster_id_good)
@@ -117,7 +111,7 @@ fprintf('[process_spike_data] Using %d curated good units from %s\n', ...
     numel(cluster_id_good), good_csv_path);
 
 % ---------------- Validate inputs ----------------
-Bin_edges = opt.BinEdges4cm(:)';
+Bin_edges = opt.BinEdges4cm(:)';   % ensure row
 nBins     = numel(Bin_edges) - 1;
 nTrials   = numel(trans_beg);
 nUnits    = numel(cluster_id_good);
@@ -133,6 +127,8 @@ rate_4cm_3D = NaN(nTrials, nBins, nUnits, 'double');
 raster_data = cell(nUnits, nTrials);
 
 % ---------------- Main loop ----------------
+speed_thresh = opt.SpeedThresh; % cm/s (instantaneous RS-sample speed for raster gating)
+
 for u = 1:nUnits
     cid = cluster_id_good(u);
     unit_spikes = st_s(sc == cid);
@@ -172,7 +168,7 @@ for u = 1:nUnits
         if isempty(ts_tr)
             rate = zeros(1, nBins);
             rate(~isfinite(occ_row)) = NaN;
-            rate_4cm_3D(tr, :, u) = rate;
+            rate_4cm_3D(tr, :, u) = rate;   % FIX: ensure assignment
             continue;
         end
 
@@ -189,8 +185,8 @@ for u = 1:nUnits
         idx(idx > N) = N;
 
         % Instantaneous speed at RS samples (centered derivative)
-        v_inst   = gradient(ps_RS, ts_RS); % cm/s
-        fast_mask = v_inst > opt.SpeedThresh;
+        v_inst    = gradient(ps_RS, ts_RS); % cm/s
+        fast_mask = v_inst > speed_thresh;  % forward-only
 
         % Raster gating: keep spikes whose nearest RS sample is fast
         keep = fast_mask(idx);

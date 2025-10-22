@@ -32,7 +32,7 @@ selectedRegion = '';
 csvPath = '';
 matPath = '';
 
-for i = 1:numel(candidateRegions)
+for i = 1:numel(candidateRegions) % big loop for each region
     region = candidateRegions{i};
     regionFolder = fullfile(vrFolder, region);
     if ~isfolder(regionFolder), continue; end
@@ -47,7 +47,7 @@ for i = 1:numel(candidateRegions)
         matPath = tryMat;
         break;  % pick the first region that has both files
     end
-end
+end %% this needs to end @ outer loop in bottom
 
 if isempty(selectedRegion)
     error('Could not automatically find both CSV and MAT in PPC/VC. Expected:\n  UnitMetrics\\%s_GoodUnitInfo.csv\n  Derived_V2\\spatial_analysis_v2.mat', animalName);

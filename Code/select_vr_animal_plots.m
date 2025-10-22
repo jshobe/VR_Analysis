@@ -27,18 +27,19 @@ function select_vr_animal_plots(varargin)
     addParameter(p, 'Overwrite', false, @islogical);
     addParameter(p, 'SaveIntermediates', true, @islogical);
     addParameter(p, 'FiguresVisible', 'off', @ischar);
-    addParameter(p, 'SmoothingWin', 8, @(x)isnumeric(x)&&x>=0); % in cm, not bins
+    addParameter(p, 'SmoothingWin', 2.0, @(x)isnumeric(x)&&x>=0); % in cm, not bins
     addParameter(p, 'SavePNGs', false, @islogical);
     addParameter(p, 'PDFName', 'AllUnits_SpatialAnalysis.pdf', @ischar);
     addParameter(p, 'PDFContent', 'image', @ischar);
     addParameter(p, 'ShowTrialIDs', false, @islogical);
     addParameter(p, 'RasterMarkerSize', 2, @(v)isnumeric(v)&&v>0);
     % NEW: adjustable speed gate + legacy plotting toggle
-    addParameter(p, 'SpeedThresh', 1.5, @(x)isnumeric(x)&&isscalar(x)&&x>=0);
-    addParameter(p, 'MakeLegacyPlots', false, @islogical);
+    addParameter(p, 'SpeedThresh', 2.5, @(x)isnumeric(x)&&isscalar(x)&&x>=0);
+    addParameter(p, 'MakeLegacyPlots', true, @islogical);
     % In the parser
-    addParameter(p, 'SaveFIGs', false, @islogical);
-    addParameter(p, 'FIGDir', '', @(s)ischar(s)||isstring(s));
+    addParameter(p, 'SaveFIGs', true, @islogical);
+    addParameter(p, 'FIGDir', 'false', @(s)ischar(s)||isstring(s));
+    addParameter(p, 'UseMedianSpeedMask', true, @(x)islogical(x)&&isscalar(x));   % NEW
 
 
     parse(p, varargin{:});
@@ -63,8 +64,8 @@ function select_vr_animal_plots(varargin)
     % Load or compute behavior (legacy cache path) with adjustable SpeedThresh
     [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] = ...
         load_behavior_data(animal_folder, derived_dir, opts.Overwrite, opts.SaveIntermediates, ...
-                           'SpeedThresh', opts.SpeedThresh);
-
+                          'SpeedThresh', opts.SpeedThresh, ...
+                        'UseMedianSpeedMask', opts.UseMedianSpeedMask);  % NEW
     % Process each region (legacy plots + V2 FSC/3D 4cm)
     for r = 1:numel(opts.Regions)
         region = opts.Regions{r};
@@ -132,10 +133,11 @@ end
 function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] = ...
     load_behavior_data(animal_folder, derived_dir, overwrite, save_intermediates, varargin)
     % Load cached behavior or compute from scratch (manual cache workflow).
-    % Records speed_thresh in cache, but does NOT auto-invalidate; only warns on mismatch.
+    % Records speed_thresh and use_median_speed in cache, but does NOT auto-invalidate; only warns on mismatch.
 
     p = inputParser;
     addParameter(p, 'SpeedThresh', 2.5, @(x)isnumeric(x)&&isscalar(x)&&x>=0);
+    addParameter(p, 'UseMedianSpeedMask', true, @(x)islogical(x)&&isscalar(x));  % NEW
     parse(p, varargin{:});
     opt = p.Results;
 
@@ -143,39 +145,48 @@ function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] 
 
     if exist(cache_file, 'file') && ~overwrite
         log_msg('Loading behavior cache...');
-        S = load(cache_file, 'interval_data', 'occupancy_4cm', 'halls', ...
-            'trans_beg', 'trans_end', 'maxRHD_ts', 'speed_thresh');
+        S = load(cache_file, 'interval_data','occupancy_4cm','halls', ...
+                            'trans_beg','trans_end','maxRHD_ts', ...
+                            'speed_thresh','use_median_speed');  % NEW fields
         interval_data = S.interval_data;
         occupancy_4cm = S.occupancy_4cm;
-        halls = S.halls;
-        trans_beg = S.trans_beg;
-        trans_end = S.trans_end;
-        maxRHD_ts = S.maxRHD_ts;
+        halls         = S.halls;
+        trans_beg     = S.trans_beg;
+        trans_end     = S.trans_end;
+        maxRHD_ts     = S.maxRHD_ts;
         log_msg('Loaded %d trials, %d bins', numel(interval_data), size(occupancy_4cm, 2));
-        if isfield(S, 'speed_thresh') && isfinite(S.speed_thresh) && S.speed_thresh ~= opt.SpeedThresh
+        if isfield(S,'speed_thresh') && isfinite(S.speed_thresh) && S.speed_thresh ~= opt.SpeedThresh
             log_msg('WARNING: behavior cache built with SpeedThresh=%.3f; current=%.3f. Using cached behavior (no overwrite).', ...
-                S.speed_thresh, opt.SpeedThresh);
+                    S.speed_thresh, opt.SpeedThresh);
+        end
+        if isfield(S,'use_median_speed') && islogical(S.use_median_speed) && S.use_median_speed ~= opt.UseMedianSpeedMask
+            log_msg('WARNING: cache built with UseMedianSpeedMask=%d; current=%d. Using cached behavior (no overwrite).', ...
+                    S.use_median_speed, opt.UseMedianSpeedMask);
         end
         return;
     end
 
-    log_msg('Computing behavior (SpeedThresh=%.3f)...', opt.SpeedThresh);
+    log_msg('Computing behavior (SpeedThresh=%.3f, UseMedianSpeedMask=%d)...', opt.SpeedThresh, opt.UseMedianSpeedMask);
     try
         [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] = ...
-            process_behavioral_data(animal_folder, 'SpeedThresh', opt.SpeedThresh);
-    catch
+            process_behavioral_data(animal_folder, 'SpeedThresh', opt.SpeedThresh, ...
+                                                 'UseMedianSpeedMask', opt.UseMedianSpeedMask);  % NEW
+    catch ME
         % Fallback to original signature if process_behavioral_data hasn’t been patched yet
-        [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] = ...
-            process_behavioral_data(animal_folder);
+        log_msg('process_behavioral_data did not accept UseMedianSpeedMask (%s). Falling back to default.', ME.message);
+        [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] = process_behavioral_data(animal_folder);
     end
     log_msg('Computed %d trials, %d bins', numel(interval_data), size(occupancy_4cm, 2));
 
     if save_intermediates
         try
-            speed_thresh = opt.SpeedThresh; %#ok<NASGU>
-            save(cache_file, 'interval_data', 'occupancy_4cm', 'halls', ...
-                'trans_beg', 'trans_end', 'maxRHD_ts', 'speed_thresh', '-v7.3');
-            log_msg('Saved behavior cache (SpeedThresh=%.3f)', opt.SpeedThresh);
+            speed_thresh     = opt.SpeedThresh;        %#ok<NASGU>
+            use_median_speed = opt.UseMedianSpeedMask; %#ok<NASGU>
+            save(cache_file, 'interval_data','occupancy_4cm','halls', ...
+                             'trans_beg','trans_end','maxRHD_ts', ...
+                             'speed_thresh','use_median_speed', '-v7.3');  % NEW
+            log_msg('Saved behavior cache (SpeedThresh=%.3f, UseMedianSpeedMask=%d)', ...
+                    opt.SpeedThresh, opt.UseMedianSpeedMask);
         catch ME
             log_msg('WARNING: Failed to save behavior cache: %s', ME.message);
         end

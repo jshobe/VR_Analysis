@@ -1,6 +1,8 @@
 %% GLM Analysis for Justin's Data, WN edits 10/20/2025
+dir='Z:\Justin\VR mice';
+[unitdata_filename, unitdata_path] = uigetfile(dir,'Select a unitdata.mat file');
+load(fullfile([unitdata_path unitdata_filename]));
 
-uigetfile()
 predictor_tab=readtable('C:\Users\jshobe\Desktop\VR_Analysis\Code\Predictors.xlsx');
 predictor_tab.INDEX=[];
 predictors=table2array(predictor_tab);
@@ -9,15 +11,20 @@ predictors(:,1:2)=[];
 % legend('Pos1','Pos2','CTX','Obj1','Ob2','Star');
 GLMrez=[]; AllPvals=[];
 
+% Cntx, Obj1, Obj2, 
+
+% rmap_sm_JS = gaussian_smooth(rmap, 4);
+% test_sm=smoothdata(rmap,'Gaussian',4); % double check if 2 means 2*4 = 8?
 
 
-cells=GLM_rmap{reg}; % pull out the cells in each region
 pval=[];  % store for each cell
 
 for c=1:size(unitdata,1) % for each cell (row)
-   rmap=[unitdata(c).Block1{1} unitdata(c).Block1{2} unitdata(c).Block1{3} unitdata(c).Block1{4}]; % one column vector for each unit
+   rmap=[unitdata(c).Block1{1} unitdata(c).Block1{2} unitdata(c).Block1{3} unitdata(c).Block1{4}]; % one column vector for each unit for block 1 only
+
    figure; plot(rmap); xline([133:133:size(predictors,1)],'r-');
-    % 1. GLMFIT original method: this is similar to multiple linear regression when using normal dist with identity link
+    
+   % 1. GLMFIT original method: this is similar to multiple linear regression when using normal dist with identity link
     [all_b_coeffs, dev, stats] = glmfit(predictors, rmap,'normal','link','identity','constant','on'); % input design matrix, all ratemaps, constant on gives intercept
     unitdata(c).GLM.b_int=all_b_coeffs(1); % first val is beta intercept/constant (grand mean?) % coefficient of constant term
     unitdata(c).GLM.b_coeffs=all_b_coeffs(2:end); % beta coefficients for each predictor
@@ -29,7 +36,7 @@ for c=1:size(unitdata,1) % for each cell (row)
     pval(c,:)=stats.p(2:end);
 end
 
-save(fullfile(''))
+
 
 %%  old code wont work
 % GLMrez=[]; AllPvals=[];
