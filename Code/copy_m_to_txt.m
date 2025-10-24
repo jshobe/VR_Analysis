@@ -13,7 +13,7 @@ function copy_m_to_txt()
 
     % Settings
     includeSubfolders = true;   % set false to only process the selected folder
-    overwriteExisting = false;  % set true to overwrite existing .txt files
+    overwriteExisting = true;  % set true to overwrite existing .txt files
 
     % Find .m files
     fileList = {};

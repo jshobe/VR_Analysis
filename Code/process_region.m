@@ -6,6 +6,7 @@ function process_region(region_folder, interval_data, occupancy_4cm, halls, ...
 % - Adjustable SpeedThresh passed to process_spike_data
 % - Manual cache management (no auto-overwrite): saves speed_thresh and warns on mismatch
 % - MakeLegacyPlots toggle: compute/load caches and block means; skip legacy plotting if false
+% - Spike count computation per unit/type/block for legend display
 
 % Output folders
 out_folder = fullfile(region_folder, 'Figures');
@@ -21,16 +22,16 @@ raster_data = {};
 cluster_id_good = [];
 
 if exist(cache_file, 'file') && isfield(opts, 'Overwrite') && ~opts.Overwrite
-    log_msg('Loading spike cache...');
     try
         S = load(cache_file, 'rate_4cm_3D', 'raster_data', 'cluster_id_good', 'speed_thresh');
-        rate_4cm_3D   = S.rate_4cm_3D;
-        raster_data   = S.raster_data;
+        rate_4cm_3D = S.rate_4cm_3D;
+        raster_data = S.raster_data;
         cluster_id_good = S.cluster_id_good;
-        if isfield(S, 'speed_thresh') && isfinite(S.speed_thresh) ...
-                && isfield(opts, 'SpeedThresh') && isfinite(opts.SpeedThresh) ...
-                && S.speed_thresh ~= opts.SpeedThresh
-            log_msg('WARNING: spike cache built with SpeedThresh=%.3f; current=%.3f. Using cached spikes (no overwrite).', ...
+        log_msg('Loaded spike cache');
+        
+        if isfield(S, 'speed_thresh') && isfield(opts, 'SpeedThresh') && ...
+           isfinite(S.speed_thresh) && S.speed_thresh ~= opts.SpeedThresh
+            log_msg('WARNING: cache built with SpeedThresh=%.3f; current=%.3f. Using cached spikes (no auto-overwrite).', ...
                 S.speed_thresh, opts.SpeedThresh);
         end
     catch ME
@@ -81,6 +82,34 @@ blocks_to_use = opts.Blocks;
 [rate_mean_halls, ~, blocks_used] = analyze_blocks(rate_4cm_3D, halls, 'Blocks', blocks_to_use);
 log_msg('Blocks: %s', format_blocks(blocks_used));
 
+% ---------------- NEW: Compute spike counts per unit, per trial type, per block ----------------
+nBlocks = numel(blocks_used);
+unit_spike_counts_3D = zeros(nUnits, 7, nBlocks);
+
+for u = 1:nUnits
+    for b = 1:nBlocks
+        trials_in_block = blocks_used{b}(:);
+        trials_in_block = trials_in_block(isfinite(trials_in_block) & trials_in_block >= 1 & trials_in_block <= nTrials);
+        
+        for TT = 1:7
+            % Find trials of this type within this block
+            trials_of_type = trials_in_block(halls(trials_in_block) == TT);
+            total_spikes = 0;
+            
+            for tr = trials_of_type(:)'
+                C = raster_data{u, tr};
+                if ~isempty(C) && isfield(C, 'positions') && ~isempty(C.positions)
+                    total_spikes = total_spikes + numel(C.positions);
+                end
+            end
+            
+            unit_spike_counts_3D(u, TT, b) = total_spikes;
+        end
+    end
+end
+
+log_msg('Computed spike counts: [%d units x 7 types x %d blocks]', nUnits, nBlocks);
+
 % ---------------- Option B: Skip legacy plotting when MakeLegacyPlots=false ----------------
 if isfield(opts, 'MakeLegacyPlots') && ~opts.MakeLegacyPlots
     log_msg('Skipping legacy plots for this region (MakeLegacyPlots=false)');
@@ -104,7 +133,6 @@ def = struct('SmoothingWin', 8, ...
              'UseParallel', true);
 
 % Safe getters that preserve types
-getOpt = @(name, dflt) (isfield(opts, name) && ~isempty(opts.(name))) * 0 + 0; %#ok<NASGU>
 function val = getOptVal(opts, name, dflt)
     if isfield(opts, name) && ~isempty(opts.(name)), val = opts.(name); else, val = dflt; end
 end
@@ -113,30 +141,17 @@ function val = aslogical(x, dflt)
     if islogical(x)
         val = x;
     elseif isnumeric(x)
-        val = x ~= 0;
-    elseif ischar(x) || isstring(x)
-        s = lower(strtrim(char(x)));
-        val = any(strcmp(s, {'true','1','yes'}));
+        val = logical(x);
     else
         val = dflt;
     end
 end
 
-% Resolve and type-correct options
-smoothWin      = getOptVal(opts, 'SmoothingWin',  def.SmoothingWin);
-savePNGs       = aslogical(getOptVal(opts, 'SavePNGs', def.SavePNGs), def.SavePNGs);
-pdfName        = char(getOptVal(opts, 'PDFName',  def.PDFName));
-pdfContent     = char(getOptVal(opts, 'PDFContent', def.PDFContent));
-showTrialIDs   = aslogical(getOptVal(opts, 'ShowTrialIDs', def.ShowTrialIDs), def.ShowTrialIDs);
-rasterMarkerSz = getOptVal(opts, 'RasterMarkerSize', def.RasterMarkerSize);
-legendOutside  = aslogical(getOptVal(opts, 'LegendOutside', def.LegendOutside), def.LegendOutside);
-useParallel    = aslogical(getOptVal(opts, 'UseParallel', def.UseParallel), def.UseParallel);
 savePNGs     = isfield(opts,'SavePNGs')     && islogical(opts.SavePNGs)     && opts.SavePNGs;
 showTrialIDs = isfield(opts,'ShowTrialIDs') && islogical(opts.ShowTrialIDs) && opts.ShowTrialIDs;
 saveFIGs     = isfield(opts,'SaveFIGs')     && islogical(opts.SaveFIGs)     && opts.SaveFIGs;
 
-
-% Call create_all_plots with correctly typed values
+% Call create_all_plots with spike counts
 create_all_plots(rate_mean_halls, raster_data, halls, cluster_id_good, out_folder, ...
     'Blocks',           blocks_used, ...
     'SmoothingWin',     opts.SmoothingWin, ...
@@ -147,7 +162,9 @@ create_all_plots(rate_mean_halls, raster_data, halls, cluster_id_good, out_folde
     'TitlePrefix',      title_prefix, ...
     'RasterMarkerSize', opts.RasterMarkerSize, ...
     'SaveFIGs',         saveFIGs, ...
-    'FIGDir',           fullfile(out_folder, 'FIGs'));  % or opts.FIGDir if you add it to the 
+    'FIGDir',           fullfile(out_folder, 'FIGs'), ...
+    'SpikeCountsByTypeByBlock', unit_spike_counts_3D);  % NEW: Pass spike counts
+
 log_msg('Finished region (legacy)');
 end
 

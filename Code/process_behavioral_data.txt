@@ -1,18 +1,25 @@
-function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] = process_behavioral_data(CsvFolder)
+function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] = process_behavioral_data(CsvFolder, varargin)
 % PROCESS_BEHAVIORAL_DATA
-% Drop-in replacement matching legacy I/O, with improved RS-sample occupancy and speed gating.
+% Drop-in replacement matching legacy I/O, with RS-sample occupancy and speed gating.
 % Preserves:
 %   - pos_x < 9 filter
 %   - transitions by diff(pos_y) < -300
 %   - trimming of trans_beg/trans_end
 %   - halls extraction from pos_x at transitions
-%   - 1 kHz resample and speed threshold of 2.5 cm/s
+%   - 150 Hz resample and adjustable speed threshold (cm/s)
 %
 % Improvements:
 %   - Occupancy computed from uniformly resampled samples (RS), summing dt per bin using only "fast" samples
-%   - Bin-level median speed gating (bins with median speed <= threshold are set to NaN)
-%   - Instantaneous speed computed via centered derivative (gradient), more robust than diff
-%   - interval_data enriched with rs_bin_idx and valid_pos_idx (fast samples)
+%   - Optional bin-level median speed gating (bins with median speed <= threshold are set to NaN when enabled)
+%   - Instantaneous speed via centered derivative (gradient)
+%   - interval_data enriched with rs_bin_idx and fast RS indices
+
+    % Parse options
+    p = inputParser;
+    addParameter(p, 'SpeedThresh', 2.5, @(x)isnumeric(x)&&isscalar(x)&&x>=0);
+    addParameter(p, 'UseMedianSpeedMask', true, @(x)islogical(x)&&isscalar(x));
+    parse(p, varargin{:});
+    opt = p.Results;
 
     % ---- Find CSV (folder or parent) ----
     fname_candidates = {'CSVtableRHDts_Nans.csv','CSVtableRHDts_Nans'};
@@ -61,11 +68,11 @@ function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] 
     end
 
     % ---- Parameters ----
-    upsam_freq = 150;             % Hz
-    dt = 1 / upsam_freq;           % seconds per RS sample
-    Bin_edges = 0:4:534;           % 4 cm bin edges
-    nBins = numel(Bin_edges) - 1;
-    speed_thresh = 2.5;            % cm/s
+    upsam_freq   = 150;               % Hz
+    dt           = 1 / upsam_freq;    % seconds per RS sample
+    Bin_edges    = 0:4:534;           % 4 cm bin edges
+    nBins        = numel(Bin_edges) - 1;
+    speed_thresh = opt.SpeedThresh;   % use the parsed option
 
     % ---- Outputs ----
     occupancy_4cm = NaN(length(trans_beg), nBins);
@@ -88,12 +95,18 @@ function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] 
         ts_RS = trans_beg(i):dt:trans_end(i);
         ps_RS = interp1(ts, ps, ts_RS, 'linear');
 
-        % Fill small gaps
-        if any(~isfinite(ps_RS)), ps_RS = fillmissing(ps_RS, 'linear'); end
+        % Fill small gaps (including ends if needed)
+        if any(~isfinite(ps_RS))
+            ps_RS = fillmissing(ps_RS, 'linear', 'EndValues', 'nearest');
+        end
+
+        % Optional clamp to bin range (protect against tiny negative/overflow excursions)
+        % Right-open last edge: avoid exactly at Bin_edges(end)
+        % ps_RS = min(max(ps_RS, Bin_edges(1)), Bin_edges(end) - eps);
 
         % Robust instantaneous speed (centered derivative)
-        v_inst = gradient(ps_RS, ts_RS);          % cm/s
-        fast_mask = v_inst > speed_thresh;
+        v_inst    = gradient(ps_RS, ts_RS);   % cm/s
+        fast_mask = v_inst > speed_thresh;    % forward-only
 
         % RS sample-to-bin mapping
         rs_bin_idx = discretize(ps_RS, Bin_edges);
@@ -107,31 +120,36 @@ function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] 
             occ_row = zeros(1, nBins);
         end
 
-        % Bin-level median speed gate (compute per bin from all RS samples)
+        % Bin-level median speed (always compute for diagnostics; mask optionally)
         valid_idx = ~isnan(rs_bin_idx);
         if any(valid_idx)
             bin_speed = accumarray(rs_bin_idx(valid_idx)', v_inst(valid_idx)', [nBins,1], @nanmedian, NaN);
         else
             bin_speed = nan(nBins,1);
         end
-        low_speed_bins = bin_speed <= speed_thresh;
-        occ_row(low_speed_bins) = NaN;
+
+        % Apply the median speed gate only if toggled ON
+        if opt.UseMedianSpeedMask
+            low_speed_bins = bin_speed <= speed_thresh;
+            occ_row(low_speed_bins) = NaN;
+        end
 
         % Store occupancy
         occupancy_4cm(i, :) = occ_row;
 
         % Build interval_data for downstream usage
-        bin_centers = Bin_edges(1:end-1) + 2;      % center of each 4 cm bin
-        speed_idx_raster = find(fast_mask);        % indices of fast RS samples (for raster gating)
+        bin_centers       = Bin_edges(1:end-1) + 2;      % center of each 4 cm bin
+        speed_idx_raster  = find(fast_mask);             % indices of fast RS samples (for raster gating)
         interval_data{i} = struct( ...
             'ts_RS', ts_RS, ...
             'ps_RS', ps_RS, ...
             'speed_idx_raster', speed_idx_raster, ...
             'valid_pos_idx', speed_idx_raster, ...     % same as fast_mask indices
             'rs_bin_idx', rs_bin_idx, ...
-            'speed_bins', bin_speed(:)', ...           % per-bin median speed (cm/s)
+            'speed_bins', bin_speed(:)', ...           % per-bin median speed (cm/s), always defined
             'bin_centers', bin_centers);
     end
 
-    fprintf('[behavior] %s | trials=%d, bins=%d\n', fpath, numel(interval_data), size(occupancy_4cm,2));
+    fprintf('[behavior] %s | trials=%d, bins=%d | SpeedThresh=%.3f | UseMedianSpeedMask=%d\n', ...
+        fpath, numel(interval_data), size(occupancy_4cm,2), speed_thresh, opt.UseMedianSpeedMask);
 end

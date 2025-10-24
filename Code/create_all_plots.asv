@@ -3,9 +3,8 @@ function create_all_plots(rate_mean_halls, raster_data, halls, cluster_id_good, 
 % Orchestrates per-unit legacy plotting and merges a single PDF.
 %
 % New options:
-% 'FileNum'                  : numeric file/session number used for label mapping (default: NaN)
-% 'IsEvenFile'               : boolean parity of the file/session (default: false)
-% 'SpikeCountsByTypeByBlock' : [nUnits x 7 x nBlocks] spike counts (optional)
+% 'FileNum'     : numeric file/session number used for label mapping (default: NaN)
+% 'IsEvenFile'  : boolean parity of the file/session (default: false)
 
 % Parse options
 p = inputParser;
@@ -26,7 +25,7 @@ addParameter(p, 'SaveFIGs', false, @islogical);
 addParameter(p, 'FIGDir', '', @(s)ischar(s)||isstring(s));
 addParameter(p, 'FileNum', NaN, @(x)isnumeric(x)&&isscalar(x));
 addParameter(p, 'IsEvenFile', false, @islogical);
-addParameter(p, 'SpikeCountsByTypeByBlock', [], @(x)isempty(x)||isnumeric(x));  % NEW
+addParameter(p, 'SpikeCountsByTypeByBlock', [], @(x)isempty(x)||isnumeric(x));
 
 parse(p, varargin{:});
 opt = p.Results;
@@ -93,6 +92,7 @@ fprintf('[create_all_plots] Processing %d units...\n', nUnits);
 tStart = tic;
 
 % Parallel or serial
+% In the parallel loop:
 if opt.UseParallel && nUnits > 1
     if isempty(gcp('nocreate')), parpool('local'); end
     parfor unit = 1:nUnits
@@ -151,7 +151,6 @@ end
 function process_unit(unit, clusterID, rate_mean_halls, raster_data, halls, ...
     Blocks, tt_counts, binCenters, xMin, xMax, sc_all, metadata_table, ...
     opt, temp_pdf_file, png_dir, fig_dir, nBlocks, unit_spike_counts)  % NEW arg
-
 % Create figure
 fig = figure('Visible', 'off', 'Color', 'w', 'Units', 'pixels', 'Position', [100 100 1200 800]);
 

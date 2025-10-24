@@ -1,14 +1,7 @@
 function legacy_plot_unit_page(fig, unit, clusterID, rate_mean_halls, raster_data, halls, ...
-    Blocks, tt_counts, binCenters, xMin, xMax, sc_all, metadataTable, opt, unit_spike_counts)
+    Blocks, tt_counts, binCenters, xMin, xMax, sc_all, metadataTable, opt)
 % LEGACY_PLOT_UNIT_PAGE
 % One page per unit: raster + rate panels per block, with informative labels via get_scene_lookup.
-%
-% NEW: unit_spike_counts parameter (optional) - [7 x nBlocks] spike counts per type per block
-
-% Handle optional spike counts
-if nargin < 14
-    unit_spike_counts = [];
-end
 
 nBlocks = numel(Blocks);
 
@@ -21,8 +14,8 @@ plot_raster_legacy(axR, raster_data, halls, unit, Blocks, xMin, xMax, opt.ShowTr
 title(axR, 'Position Raster - All Trials');
 xlim(axR, [xMin, xMax]);
 
-% Rows 2+: Rate curves per block (with scene labels and spike counts)
-axRates = plot_rate_curves_legacy(tl, rate_mean_halls, unit, Blocks, tt_counts, binCenters, xMin, xMax, nBlocks, opt, unit_spike_counts);
+% Rows 2+: Rate curves per block (with scene labels)
+axRates = plot_rate_curves_legacy(tl, rate_mean_halls, unit, Blocks, tt_counts, binCenters, xMin, xMax, nBlocks, opt);
 
 % Shared y-limits across rate panels
 set_shared_ylims(axRates);
@@ -102,7 +95,9 @@ set(ax, 'YDir', 'reverse');
 grid(ax, 'on');
 
 % Corridor boundaries (visual guides)
+
 xline(ax, xMin + 266.5, 'k--', 'LineWidth', 1.0);
+
 
 % Block labels
 for b = 1:numel(Blocks)
@@ -123,12 +118,7 @@ if showTrialIDs && ~isempty(y_ticks)
 end
 end
 
-function axRates = plot_rate_curves_legacy(tl, rate_mean_halls, unit, Blocks, tt_counts, binCenters, xMin, xMax, nBlocks, opt, unit_spike_counts)
-% Handle optional spike counts
-if nargin < 11
-    unit_spike_counts = [];
-end
-
+function axRates = plot_rate_curves_legacy(tl, rate_mean_halls, unit, Blocks, tt_counts, binCenters, xMin, xMax, nBlocks, opt)
 axRates = gobjects(1, nBlocks);
 cmap = get_trial_type_colormap();
 lineStyle = repmat({'-'}, 1, 7);
@@ -177,11 +167,7 @@ for b = 1:nBlocks
         % Fallback if helper is missing
         labelMap = containers.Map('KeyType','double','ValueType','char');
         labelMap(1) = 'Familiar A'; labelMap(2) = 'Familiar B';
-        if mod(b,2)==1
-            labelMap(3)='Novel C'; labelMap(4)='Novel D';
-        else
-            labelMap(5)='Swap C'; labelMap(6)='Swap D';
-        end
+        if mod(b,2)==1, labelMap(3)='Novel C'; labelMap(4)='Novel D'; else, labelMap(5)='Swap C'; labelMap(6)='Swap D'; end
         labelMap(7) = 'No objects';
     end
 
@@ -201,14 +187,7 @@ for b = 1:nBlocks
 
         h = plot(ax, binCenters, r, 'Color', cmap(TT,:), 'LineStyle', lineStyle{TT}, 'LineWidth', lineWidth(TT));
         plottedHandles(end+1) = h; %#ok<AGROW>
-        
-        % Build legend label with spike counts (when available)
-        if ~isempty(unit_spike_counts) && size(unit_spike_counts, 2) >= b && size(unit_spike_counts, 1) >= TT
-            spike_count = unit_spike_counts(TT, b);
-            plottedLabels{end+1} = sprintf('%s (n=%d, spikes=%d)', labelStr, tt_counts{b}(TT), spike_count); %#ok<AGROW>
-        else
-            plottedLabels{end+1} = sprintf('%s (n=%d)', labelStr, tt_counts{b}(TT)); %#ok<AGROW>
-        end
+        plottedLabels{end+1}  = sprintf('%s (n=%d)', labelStr, tt_counts{b}(TT)); %#ok<AGROW>
     end
 
     xlim(ax, [xMin, xMax]);
