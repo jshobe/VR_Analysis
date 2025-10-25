@@ -23,9 +23,9 @@ if any(strcmp(predictor_tab.Properties.VariableNames, 'INDEX'))
     predictor_tab.INDEX = [];  % drop INDEX if present
 end
 predictors = table2array(predictor_tab);
-if size(predictors, 2) >= 2
-    predictors(:, 1:2) = [];   % drop first two non-predictor columns if present
-end
+% if size(predictors, 2) >= 2
+%     predictors(:, 1:2) = [];   % drop first two non-predictor columns if present
+% end
 if ~isnumeric(predictors)
     error('Predictor sheet contains non-numeric entries after cleanup.');
 end
