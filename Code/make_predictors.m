@@ -1,152 +1,160 @@
-%% Create GLM Predictor Files from Scratch - Linear Object Ramps (0.25 to 1)
+% make_predictors_once.m
+% One-time script to build and save four predictor files in the current folder (pwd).
+% Files:
+%   - Predictors_Odd_Block13.xlsx
+%   - Predictors_Odd_Block2.xlsx
+%   - Predictors_Even_Block13.xlsx
+%   - Predictors_Even_Block2.xlsx
+%
+% Spec:
+% - Scene length: nBins = 133 (1 bin = 4 cm) [can change; landmarks scale by nBins/133]
+% - Pos: binary (0 for bins 1..66, 1 for bins 67..133)
+% - Context: 0=A, 1=B
+% - Objects: Chair(C), Drum(D), Star(S)
+%   - Mid-scene: start at bin 20 with value 0.25, linearly ramp to 1 at bin 67, then 0
+%   - End-scene: start at bin 87 with value 0.25, linearly ramp to 1 at bin 133, then 0
+%   - No overlap within a trial (mid ends <= 67; end starts >= 87)
+%   - Star uses same timing as other objects
+% - 4 panels appended (rows = 133 x 4):
+%   - Block 1 or 3: TT1, TT2, TT3, TT4 (A, A, B, B)
+%   - Block 2: TT1, TT2, TT5, TT6 (A, A, A, A)
+% - TT mapping:
+%   Odd:  TT1=C_S (A), TT2=S_D (A), TT3=C_S (B), TT4=S_D (B), TT5=S_C (A), TT6=D_S (A)
+%   Even: TT1=S_C (A), TT2=D_S (A), TT3=S_C (B), TT4=D_S (B), TT5=C_S (A), TT6=S_D (A)
 
-clearvars; close all;
+% ---------------- Parameters ----------------
+nBins        = 133;
+scale        = nBins / 133;
 
-%% Define spatial structure
-bins_per_context = 133;
-num_contexts = 4;
-total_bins = bins_per_context * num_contexts;  % 532 bins
+firstHalfEnd = round(66 * scale);   % Pos=0 for 1..66; Pos=1 for 67..nBins
+midStartBin  = round(20 * scale);   % first 0.25 value for mid
+midEndBin    = round(67 * scale);   % mid target (end of mid ramp)
+endStartBin  = round(87 * scale);   % first 0.25 value for end (UPDATED)
+endEndBin    = nBins;               % end target (end of end ramp)
 
-%% Create POS predictor (0 = first half, 1 = second half of each context)
-POS = zeros(total_bins, 1);
-for ctx = 1:num_contexts
-    ctx_start = (ctx - 1) * bins_per_context + 1;
-    second_half_start = ctx_start + 66;  % bin 67 onwards
-    second_half_end = ctx_start + bins_per_context - 1;
-    POS(second_half_start:second_half_end) = 1;
+% Ensure no overlap by construction
+midEndBin    = min(midEndBin, firstHalfEnd);          % mid ramp ends in first half
+endStartBin  = max(endStartBin, firstHalfEnd + 1);    % end ramp starts in second half
+
+rampStartVal = 0.25; % first ramp value
+rampEndVal   = 1.0;  % peak value at target bin
+
+% Binary Pos column
+PosBinary = [zeros(firstHalfEnd,1); ones(nBins - firstHalfEnd,1)];
+
+% Helper to build a single nBins-row panel for spec 'X_Y' and context ctx (0/1)
+build_panel = @(spec, ctx) build_one_panel(spec, ctx, PosBinary, nBins, ...
+                                           midStartBin, midEndBin, ...
+                                           endStartBin, endEndBin, ...
+                                           rampStartVal, rampEndVal);
+
+% ---------------- Odd parity files ----------------
+% Block 1/3: TT1, TT2, TT3, TT4 (A,A,B,B)
+T_odd_13 = [
+    build_panel('C_S', 0);  % TT1 A
+    build_panel('S_D', 0);  % TT2 A
+    build_panel('C_S', 1);  % TT3 B
+    build_panel('S_D', 1)   % TT4 B
+];
+writetable(T_odd_13, fullfile(pwd, 'Predictors_Odd_Block13.xlsx'));
+
+% Block 2: TT1, TT2, TT5, TT6 (A,A,A,A) swapped positions
+T_odd_2 = [
+    build_panel('C_S', 0);  % TT1 A
+    build_panel('S_D', 0);  % TT2 A
+    build_panel('S_C', 0);  % TT5 A (swap)
+    build_panel('D_S', 0)   % TT6 A (swap)
+];
+writetable(T_odd_2, fullfile(pwd, 'Predictors_Odd_Block2.xlsx'));
+
+% ---------------- Even parity files ----------------
+% Block 1/3: TT1, TT2, TT3, TT4 (A,A,B,B)
+T_even_13 = [
+    build_panel('S_C', 0);  % TT1 A
+    build_panel('D_S', 0);  % TT2 A
+    build_panel('S_C', 1);  % TT3 B
+    build_panel('D_S', 1)   % TT4 B
+];
+writetable(T_even_13, fullfile(pwd, 'Predictors_Even_Block13.xlsx'));
+
+% Block 2: TT1, TT2, TT5, TT6 (A,A,A,A) swapped positions
+T_even_2 = [
+    build_panel('S_C', 0);  % TT1 A
+    build_panel('D_S', 0);  % TT2 A
+    build_panel('C_S', 0);  % TT5 A (swap)
+    build_panel('S_D', 0)   % TT6 A (swap)
+];
+writetable(T_even_2, fullfile(pwd, 'Predictors_Even_Block2.xlsx'));
+
+fprintf('[make_predictors_once] Wrote 4 files to %s\n', pwd);
+
+% ---------------- Local functions (script-local) ----------------
+function T = build_one_panel(spec, ctx, PosBinary, nBins, ...
+                             midStart, midEnd, endStart, endEnd, ...
+                             startVal, endVal)
+    % Parse spec like 'C_S'
+    parts = strsplit(strrep(spec, ' ', ''), '_');
+    if numel(parts) ~= 2
+        error('Invalid spec "%s". Expected "X_Y" with X,Y in {C,D,S}.', spec);
+    end
+    midObj = upper(parts{1});
+    endObj = upper(parts{2});
+
+    % Initialize columns
+    Pos     = PosBinary;
+    Context = ctx * ones(nBins,1);
+    Chair   = zeros(nBins,1);
+    Drum    = zeros(nBins,1);
+    Star    = zeros(nBins,1);
+
+    % Mid ramp: 0 before start; startVal at start; linear to 1 at midEnd; 0 after
+    if ~isempty(midObj)
+        vMid = ramp_segment(nBins, midStart, midEnd, startVal, endVal);
+        switch midObj
+            case 'C', Chair = max(Chair, vMid);
+            case 'D', Drum  = max(Drum,  vMid);
+            case 'S', Star  = max(Star,  vMid);
+            otherwise, error('Invalid mid object "%s"', midObj);
+        end
+    end
+
+    % End ramp: 0 before start; startVal at start; linear to 1 at endEnd; 0 after
+    if ~isempty(endObj)
+        vEnd = ramp_segment(nBins, endStart, endEnd, startVal, endVal);
+        switch endObj
+            case 'C', Chair = max(Chair, vEnd);
+            case 'D', Drum  = max(Drum,  vEnd);
+            case 'S', Star  = max(Star,  vEnd);
+            otherwise, error('Invalid end object "%s"', endObj);
+        end
+    end
+
+    % Clip to [0,1]
+    Chair = min(max(Chair,0),1);
+    Drum  = min(max(Drum,0),1);
+    Star  = min(max(Star,0),1);
+
+    % Compose table
+    T = table(Pos, Context, Chair, Drum, Star);
 end
 
-%% Create CNTX predictor for ODD blocks (0 for TT1/TT2, 1 for TT3/TT4)
-CNTX_odd = [zeros(133,1); zeros(133,1); ones(133,1); ones(133,1)];
-
-%% Create object predictors with LINEAR RAMP from 0.25 to 1
-% Object positions (in bins):
-% - Middle object: bins 32-66 (linear ramp from 0.25 to 1)
-% - End object: bins 99-133 (linear ramp from 0.25 to 1)
-% - Star (reward): bins 99-133 (same as end object)
-
-bin_positions = (1:bins_per_context)';
-
-% Create linear ramp from 0.25 to 1 over 35 bins
-ramp_length = 35;
-linear_ramp = linspace(0.25, 1, ramp_length)';
-
-% Middle object (Chair or Drum depending on group)
-OBJ_middle = zeros(bins_per_context, 1);
-OBJ_middle(32:66) = linear_ramp;  % 35 bins: 66-32+1 = 35
-
-% End object (Drum or Chair depending on group)
-OBJ_end = zeros(bins_per_context, 1);
-OBJ_end(99:133) = linear_ramp;  % 35 bins: 133-99+1 = 35
-
-% Star (reward) - same position as end object
-STAR_profile = zeros(bins_per_context, 1);
-STAR_profile(99:133) = linear_ramp;
-
-% Replicate across 4 contexts
-OBJ_middle_full = repmat(OBJ_middle, num_contexts, 1);
-OBJ_end_full = repmat(OBJ_end, num_contexts, 1);
-STAR_full = repmat(STAR_profile, num_contexts, 1);
-
-%% ===== GROUP 1: TT1=C_S, TT2=D_S =====
-% Mice: VR29, 31, 33, 35, 37, 39, 41, 43, 46, 47
-
-% ODD BLOCKS: Chair in middle, Drum at end
-C_odd_g1 = OBJ_middle_full;
-D_odd_g1 = OBJ_end_full;
-NR_odd_g1 = C_odd_g1 + D_odd_g1;
-
-predictor_tab_odd_g1 = table(POS, CNTX_odd, C_odd_g1, D_odd_g1, STAR_full, NR_odd_g1, ...
-    'VariableNames', {'POS', 'CNTX', 'C', 'D', 'STAR', 'NONREWARDED'});
-
-writetable(predictor_tab_odd_g1, 'Predictors_ODD_Group1.xlsx');
-fprintf('Created: Predictors_ODD_Group1.xlsx (6 predictors)\n');
-
-% EVEN BLOCKS: Drum in middle, Chair at end (SWAPPED, no CNTX)
-D_even_g1 = OBJ_middle_full;
-C_even_g1 = OBJ_end_full;
-NR_even_g1 = C_even_g1 + D_even_g1;
-
-predictor_tab_even_g1 = table(POS, C_even_g1, D_even_g1, STAR_full, NR_even_g1, ...
-    'VariableNames', {'POS', 'C', 'D', 'STAR', 'NONREWARDED'});
-
-writetable(predictor_tab_even_g1, 'Predictors_EVEN_Group1.xlsx');
-fprintf('Created: Predictors_EVEN_Group1.xlsx (5 predictors, no CNTX)\n');
-
-%% ===== GROUP 2: TT1=S_C, TT2=S_D =====
-% All other mice (excluding VR27)
-
-% ODD BLOCKS: Drum in middle, Chair at end
-D_odd_g2 = OBJ_middle_full;
-C_odd_g2 = OBJ_end_full;
-NR_odd_g2 = C_odd_g2 + D_odd_g2;
-
-predictor_tab_odd_g2 = table(POS, CNTX_odd, D_odd_g2, C_odd_g2, STAR_full, NR_odd_g2, ...
-    'VariableNames', {'POS', 'CNTX', 'D', 'C', 'STAR', 'NONREWARDED'});
-
-writetable(predictor_tab_odd_g2, 'Predictors_ODD_Group2.xlsx');
-fprintf('Created: Predictors_ODD_Group2.xlsx (6 predictors)\n');
-
-% EVEN BLOCKS: Chair in middle, Drum at end (SWAPPED, no CNTX)
-C_even_g2 = OBJ_middle_full;
-D_even_g2 = OBJ_end_full;
-NR_even_g2 = C_even_g2 + D_even_g2;
-
-predictor_tab_even_g2 = table(POS, C_even_g2, D_even_g2, STAR_full, NR_even_g2, ...
-    'VariableNames', {'POS', 'C', 'D', 'STAR', 'NONREWARDED'});
-
-writetable(predictor_tab_even_g2, 'Predictors_EVEN_Group2.xlsx');
-fprintf('Created: Predictors_EVEN_Group2.xlsx (5 predictors, no CNTX)\n');
-
-%% Verify ranges
-fprintf('\n=== VERIFICATION ===\n');
-fprintf('All predictors scaled 0-1:\n');
-fprintf('  POS: min=%.2f, max=%.2f\n', min(POS), max(POS));
-fprintf('  CNTX: min=%.2f, max=%.2f\n', min(CNTX_odd), max(CNTX_odd));
-fprintf('  C (Group1 ODD): min=%.3f, max=%.3f\n', min(C_odd_g1), max(C_odd_g1));
-fprintf('  D (Group1 ODD): min=%.3f, max=%.3f\n', min(D_odd_g1), max(D_odd_g1));
-fprintf('  STAR: min=%.3f, max=%.3f\n', min(STAR_full), max(STAR_full));
-fprintf('  NONREWARDED: min=%.3f, max=%.3f (should not exceed 1)\n', min(NR_odd_g1), max(NR_odd_g1));
-
-%% Visualize
-figure('Position', [100 100 1600 900]);
-
-subplot(2,2,1);
-plot(table2array(predictor_tab_odd_g1), 'LineWidth', 1.5);
-legend(predictor_tab_odd_g1.Properties.VariableNames, 'Location', 'eastoutside');
-xlabel('Spatial Bin (4cm)'); ylabel('Predictor Value');
-title('Group 1 ODD (C\_S/D\_S): Novel Context - LINEAR RAMPS');
-grid on; xline([133 266 399], 'r--', 'LineWidth', 2);
-
-subplot(2,2,2);
-plot(table2array(predictor_tab_even_g1), 'LineWidth', 1.5);
-legend(predictor_tab_even_g1.Properties.VariableNames, 'Location', 'eastoutside');
-xlabel('Spatial Bin (4cm)'); ylabel('Predictor Value');
-title('Group 1 EVEN (C\_S/D\_S): Swapped - LINEAR RAMPS');
-grid on; xline([133 266 399], 'r--', 'LineWidth', 2);
-
-subplot(2,2,3);
-plot(table2array(predictor_tab_odd_g2), 'LineWidth', 1.5);
-legend(predictor_tab_odd_g2.Properties.VariableNames, 'Location', 'eastoutside');
-xlabel('Spatial Bin (4cm)'); ylabel('Predictor Value');
-title('Group 2 ODD (S\_C/S\_D): Novel Context - LINEAR RAMPS');
-grid on; xline([133 266 399], 'r--', 'LineWidth', 2);
-
-subplot(2,2,4);
-plot(table2array(predictor_tab_even_g2), 'LineWidth', 1.5);
-legend(predictor_tab_even_g2.Properties.VariableNames, 'Location', 'eastoutside');
-xlabel('Spatial Bin (4cm)'); ylabel('Predictor Value');
-title('Group 2 EVEN (S\_C/S\_D): Swapped - LINEAR RAMPS');
-grid on; xline([133 266 399], 'r--', 'LineWidth', 2);
-
-%% Summary
-fprintf('\n=== SUMMARY ===\n');
-fprintf('Created 4 predictor files with LINEAR RAMPS (0.25 to 1):\n\n');
-fprintf('Group 1 (TT1=C_S, TT2=D_S): VR29, 31, 33, 35, 37, 39, 41, 43, 46, 47\n');
-fprintf('Group 2 (TT1=S_C, TT2=S_D): All other mice (excluding VR27)\n\n');
-fprintf('ODD blocks: 6 predictors (POS, CNTX, C, D, STAR, NONREWARDED)\n');
-fprintf('EVEN blocks: 5 predictors (POS, C, D, STAR, NONREWARDED) - no CNTX\n\n');
-fprintf('Object predictors use LINEAR RAMP from 0.25 to 1 over 35 bins\n');
-fprintf('  - Middle object: bins 32-66\n');
-fprintf('  - End object: bins 99-133\n');
-fprintf('  - Star: bins 99-133\n');
+function v = ramp_segment(nBins, startIx, endIx, startVal, endVal)
+    % Build a ramp with no post-peak plateau:
+    % - 0 before startIx
+    % - startVal at startIx
+    % - linear to endVal at endIx (inclusive)
+    % - 0 after endIx
+    startIx = min(max(round(startIx), 1), nBins);
+    endIx   = min(max(round(endIx),   1), nBins);
+    v = zeros(nBins,1);
+    if endIx < startIx
+        v(startIx) = startVal;
+        return;
+    end
+    n = endIx - startIx;
+    vals = linspace(startVal, endVal, n+1);
+    v(startIx:endIx) = vals(:);
+    if endIx < nBins
+        v(endIx+1:end) = 0.0;
+    end
+end
