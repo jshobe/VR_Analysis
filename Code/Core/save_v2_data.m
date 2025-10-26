@@ -1,6 +1,9 @@
 function save_v2_data(animal_path, region_path, derived_path, varargin)
 % SAVE_V2_DATA
 % Compute and save "Derived_V2" data for a single region.
+% Strict version: expects process_region to return ONE struct with fields:
+%   - tt_counts
+%   - binCenters
 %
 % Called by run_full_pipeline:
 %   save_v2_data(animal_path, region_path, derived_path, ...
@@ -19,14 +22,31 @@ if ~exist(derived_path, 'dir')
 end
 
 % -------------------- Run region processing ----------------
-% IMPORTANT: Only capture what process_region actually returns.
-[tt_counts, binCenters] = process_region( ...
+% STRICT: process_region must return a single struct with required fields.
+R = process_region( ...
     animal_path, ...
     region_path, ...
     'Blocks',       opt.Blocks, ...
     'SmoothingWin', opt.SmoothingWin);
 
+% -------------------- Validate shape ----------------------
+if ~isstruct(R)
+    error('process_region must return a struct. Got: %s', class(R));
+end
+if ~isfield(R, 'tt_counts')
+    error('process_region result missing field: tt_counts');
+end
+if ~isfield(R, 'binCenters')
+    error('process_region result missing field: binCenters');
+end
+
+tt_counts  = R.tt_counts;
+binCenters = R.binCenters;
+
 % -------------------- Derive axis limits -------------------
+if isempty(binCenters) || ~isvector(binCenters)
+    error('binCenters must be a non-empty vector.');
+end
 xMin = binCenters(1);
 xMax = binCenters(end);
 
