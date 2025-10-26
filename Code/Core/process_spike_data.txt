@@ -46,12 +46,6 @@ mask_behavior = isfinite(st_s) & (st_s <= maxRHD_ts) & isfinite(sc_all);
 st_s = st_s(mask_behavior);
 sc   = sc_all(mask_behavior);
 
-% Drop noise cluster 0 if present (keep arrays aligned)
-if ~isempty(sc)
-    keep_mask = (sc ~= 0);
-    st_s = st_s(keep_mask);
-    sc   = sc(keep_mask);
-end
 
 % ---------------- Read curated GoodUnit CSV ----------------
 animal_name = '';

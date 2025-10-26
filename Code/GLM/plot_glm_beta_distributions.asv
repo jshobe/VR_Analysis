@@ -42,7 +42,7 @@ addParameter(p, 'HistBinWidth', [], @(x) isempty(x) || (isnumeric(x) && isscalar
 addParameter(p, 'HistNumBins', 500, @(x) isempty(x) || (isnumeric(x) && isscalar(x) && x>=1));
 addParameter(p, 'XLimPadding', 0.05, @(x) isnumeric(x) && isscalar(x) && x>=0);
 addParameter(p, 'OverlayLineWidth', 1.0, @(x) isnumeric(x) && isscalar(x) && x>0);
-addParameter(p, 'OverlaySmooth', true, @islogical);
+addParameter(p, 'OverlaySmooth', false, @islogical);
 addParameter(p, 'OverlaySmoothBandwidth', [], @(x) isempty(x) || (isnumeric(x) && isscalar(x) && x>0));
 addParameter(p, 'OverlaySmoothNumPoints', 256, @(x) isnumeric(x) && isscalar(x) && x>=32);
 addParameter(p, 'OverlaySmoothLineWidth', 1.5, @(x) isnumeric(x) && isscalar(x) && x>0);
@@ -184,7 +184,7 @@ for pIx = 1:numel(allPredictors)
                     [f, xi_eval, bw] = ksdensity(vecAll, xi_eval, 'Bandwidth', opt.OverlaySmoothBandwidth);
                 else
                     [~, ~, bw_auto] = ksdensity(vecAll, xi_eval);% 1) Get the auto bandwidth from ksdensity JLS
-                    [f, xi_eval] = ksdensity(vecAll, xi_eval, 'Bandwidth', bw_auto/5);% 2) Recompute the density with half the bandwidth (less smooth)
+                    [f, xi_eval, bw] = ksdensity(vecAll, xi_eval);% 2) Recompute the density with half the bandwidth (less smooth)
                   
                 end
                 if opt.Verbose

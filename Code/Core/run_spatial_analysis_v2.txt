@@ -14,7 +14,7 @@ function run_spatial_analysis_v2(animal_folder, kilo_folder, out_folder, varargi
 % ---------------- Configuration with overrides ----------------
 cfg = struct();
 cfg.SmoothingWin_cm    = 12;           % for plotting (Gaussian sigma in cm)
-cfg.MinOccSec          = 0.10;         % NaN any occupancy bin below this (seconds); 0 disables
+cfg.MinOccSec          = 0.0;         % NaN any occupancy bin below this (seconds); 0 disables
 cfg.BinEdges4cm        = 0:4:534;      % spatial bin edges (cm)
 cfg.Blocks             = {12:174, 178:337};
 cfg.SavePNGs           = false;
