@@ -1,39 +1,49 @@
 function plot_glm_beta_distributions(varargin)
-% PLOT_GLM_BETA_DISTRIBUTIONS
-% Select a VR## animal; loads PPC and VC GLM unitdata and plots beta
-% distributions per block with linked x-axis across blocks (per predictor).
+% Overlay-only driver with fixed x-axis:
+% - Shaded histogram bins (raw data)
+% - Non-shaded KDE curves (smoothed data) on the same plot
+% - X-axis fixed to a specified range (default: [-15, 15]) for all subplots
+% - One figure per region (e.g., PPC and VC), pooled within each region
+% - Centered zero line in every subplot
+%
+% Requires helpers on path:
+%   collect_betas_for_block.m
+%   detect_cell_type_label.m (optional)
 %
 % Options (Name-Value):
-%   'BaseFolder'    : 'Z:\Justin\VR mice'
-%   'Regions'       : {'PPC','VC'}
-%   'GroupBy'       : 'none'|'region'|'celltype'
-%   'SavePNGs'      : false
-%   'OutDir'        : ''                % default: <VR##>/Derived_V2/GLM_Beta_Distributions
-%   'FigureVisible' : 'on'|'off'
-%   'LinkAcrossBlocks' : true           % harmonize x-limits per predictor across blocks
-%   'HistBinWidth'     : []             % e.g., 0.05 (takes precedence over HistNumBins)
-%   'HistNumBins'      : []             % e.g., 30
-%   'XLimPadding'      : 0.05           % fraction to pad global x-limits (per predictor), can be 0
-%
-% Blocks/predictors:
-%   Block 1 and 3 → 5 predictors: Pos, Context, Chair, Drum, Star
-%   Block 2       → 4 predictors: Pos, Chair, Drum, Star (Context removed)
-%
-% GLM inputs:
-%   unitdata(c).GLM.BlockN.names and b_coeffs, as produced by GLM_bare_auto.
+%   'BaseFolder'             : 'Z:\Justin\VR mice'
+%   'Regions'                : {'PPC','VC'}
+%   'SavePNGs'               : false
+%   'OutDir'                 : ''            % default: <VR##>/Derived_V2/GLM_Beta_Distributions
+%   'FigureVisible'          : 'on'|'off'
+%   'HistBinWidth'           : []            % used for raw hist bins; if empty uses HistNumBins
+%   'HistNumBins'            : 500
+%   'OverlayLineWidth'       : 1.5           % line width for KDE curves
+%   'OverlaySmooth'          : true          % draw KDE lines in addition to hist
+%   'OverlaySmoothBandwidth' : []            % [] => auto ksdensity bandwidth; you can override
+%   'OverlaySmoothNumPoints' : 256
+%   'ShadeAlpha'             : 0.25          % transparency for shaded histograms
+%   'FixedXLim'              : [-15 15]      % fix x-axis for all plots to this range
+%   'Verbose'                : false
+%   'FigureYOffsetInches'    : 0.5           % move figure down by this amount
 
 % ---------------- Parse inputs ----------------
 p = inputParser;
 addParameter(p, 'BaseFolder', 'Z:\Justin\VR mice', @(s)ischar(s)||isstring(s));
-addParameter(p, 'Regions', {'PPC','VC'}, @iscell);
-addParameter(p, 'GroupBy', 'none', @(s)ischar(s)||isstring(s));
+addParameter(p, 'Regions', {'PPC','VC'}, @(c) iscellstr(c) || isstring(c));
 addParameter(p, 'SavePNGs', false, @islogical);
 addParameter(p, 'OutDir', '', @(s)ischar(s)||isstring(s));
 addParameter(p, 'FigureVisible', 'on', @(s)ischar(s)||isstring(s));
-addParameter(p, 'LinkAcrossBlocks', true, @islogical);
 addParameter(p, 'HistBinWidth', [], @(x) isempty(x) || (isnumeric(x) && isscalar(x) && x>0));
 addParameter(p, 'HistNumBins', 500, @(x) isempty(x) || (isnumeric(x) && isscalar(x) && x>=1));
-addParameter(p, 'XLimPadding', 0.05, @(x) isnumeric(x) && isscalar(x) && x>=0);
+addParameter(p, 'OverlayLineWidth', 1.5, @(x) isnumeric(x) && isscalar(x) && x>0);
+addParameter(p, 'OverlaySmooth', true, @islogical);
+addParameter(p, 'OverlaySmoothBandwidth', [], @(x) isempty(x) || (isnumeric(x) && isscalar(x) && x>0));
+addParameter(p, 'OverlaySmoothNumPoints', 256, @(x) isnumeric(x) && isscalar(x) && x>=32);
+addParameter(p, 'ShadeAlpha', 0.25, @(x) isnumeric(x) && isscalar(x) && x>=0 && x<=1);
+addParameter(p, 'FixedXLim', [-15 15], @(v) isnumeric(v) && isvector(v) && numel(v)==2 && v(1)<v(2));
+addParameter(p, 'Verbose', false, @islogical);
+addParameter(p, 'FigureYOffsetInches', 0.5, @(x) isnumeric(x) && isscalar(x));
 parse(p, varargin{:});
 opt = p.Results;
 
@@ -44,9 +54,9 @@ if isequal(vrFolder, 0), error('No animal folder selected.'); end
 fprintf('[beta plots] Animal: %s\n', animalName);
 
 % ---------------- Load GLM unitdata per region ----------------
-unitsAll = []; % pooled PPC+VC
+unitsAll = [];
 for i = 1:numel(opt.Regions)
-    region = opt.Regions{i};
+    region = char(opt.Regions{i});
     glmPath = fullfile(vrFolder, region, 'Derived_V2', sprintf('%s_%s_unitdata_GLM.mat', animalName, region));
     if exist(glmPath, 'file') ~= 2
         fprintf('[beta plots] Missing GLM file for %s: %s (skipping)\n', region, glmPath);
@@ -58,10 +68,13 @@ for i = 1:numel(opt.Regions)
         continue;
     end
     u = S.unitdata;
-    % augment tags
     for c = 1:numel(u)
         u(c).Region = region;
-        u(c).GroupLabel_celltype = detect_cell_type_label(u(c));
+        if exist('detect_cell_type_label', 'file')
+            u(c).GroupLabel_celltype = detect_cell_type_label(u(c));
+        else
+            u(c).GroupLabel_celltype = 'Unknown';
+        end
         u(c).GroupLabel_region   = region;
     end
     unitsAll = [unitsAll; u(:)]; %#ok<AGROW>
@@ -69,237 +82,175 @@ for i = 1:numel(opt.Regions)
 end
 if isempty(unitsAll), error('No units loaded from specified regions.'); end
 
-% ---------------- Define blocks and predictor schemas ----------------
-BlockKinds = {'13','2','13'};  % Block 1,2,3
+% ---------------- Predictor schemas ----------------
 PredictorsByBlock = {
     {'Pos','Context','Chair','Drum','Star'},  % Block 1
-    {'Pos','Chair','Drum','Star'},            % Block 2
+    {'Pos','Chair','Drum','Star'},            % Block 2 (no Context)
     {'Pos','Context','Chair','Drum','Star'}   % Block 3
 };
 allPredictors = {'Pos','Context','Chair','Drum','Star'};
 
-% ---------------- Build group labels ----------------
-groupMode = lower(string(opt.GroupBy));
-switch groupMode
-    case "none"
-        groupNames = "AllUnits";           % string scalar instead of cell
-        groupFunc  = @(u) repmat("AllUnits", numel(u), 1);
-    case "region"
-        groupNames = unique(string({unitsAll.GroupLabel_region}),'stable');
-        groupFunc  = @(u) string({u.GroupLabel_region})';
-    case "celltype"
-        groupNames = unique(string({unitsAll.GroupLabel_celltype}), 'stable');
-        groupFunc  = @(u) string({u.GroupLabel_celltype})';
-    otherwise
-        error('Invalid GroupBy: %s', opt.GroupBy);
+% ---------------- Fixed edges for histograms (shared across predictors) ----------------
+fixedMin = opt.FixedXLim(1);
+fixedMax = opt.FixedXLim(2);
+
+edgesFixedByPred = struct();
+for pIx = 1:numel(allPredictors)
+    pred = allPredictors{pIx};
+    if ~isempty(opt.HistBinWidth)
+        edges = fixedMin:opt.HistBinWidth:fixedMax;
+        if edges(end) < fixedMax
+            edges(end+1) = fixedMax; %#ok<AGROW>
+        end
+        if numel(edges) < 2
+            edges = [fixedMin, fixedMax];
+        end
+    else
+        edges = linspace(fixedMin, fixedMax, round(opt.HistNumBins)+1);
+    end
+    edgesFixedByPred.(pred) = edges;
 end
 
-% ---------------- Compute global x-limits per predictor (across blocks) ----------------
-globalLimits = compute_global_limits(unitsAll, allPredictors, BlockKinds, opt.XLimPadding);
-
-% ---------------- Output directory and figure visibility ----------------
+% ---------------- Output directory (define once) ----------------
 outDir = char(opt.OutDir);
 if isempty(outDir)
     outDir = fullfile(vrFolder, 'Derived_V2', 'GLM_Beta_Distributions');
 end
 if ~exist(outDir, 'dir'), mkdir(outDir); end
 
+% ---------------- Two figures: one for each requested region ----------------
 set(0, 'DefaultFigureVisible', opt.FigureVisible);
 cleanup = onCleanup(@() set(0, 'DefaultFigureVisible', 'on'));
 
-% ---------------- Plot per block with linked x-axis limits ----------------
-groups = groupFunc(unitsAll);
-for b = 1:numel(BlockKinds)
-    expectedPredictors = PredictorsByBlock{b};
+regionList = string(opt.Regions);  % e.g., ["PPC","VC"]
+for rIx = 1:numel(regionList)
+    regionName = regionList(rIx);
 
-    % Collect betas per predictor per group for this block
-    betaByGroup = collect_betas_for_block(unitsAll, b, expectedPredictors, groups, groupNames);
+    % Filter units to this region
+    unitsR = unitsAll(strcmp(string({unitsAll.Region}), regionName));
+    if isempty(unitsR)
+        fprintf('[beta plots] No units for %s; skipping figure.\n', char(regionName));
+        continue;
+    end
 
-    % Prepare histogram edges per predictor (consistent across blocks/groups)
-    edgesByPred = make_hist_edges(expectedPredictors, globalLimits, opt.HistBinWidth, opt.HistNumBins);
+    % Build a trivial grouping (pool all units)
+    groupNamesR = "AllUnits";
+    groupsR     = repmat("AllUnits", numel(unitsR), 1);
 
-    % Plot
+    % Collect betas per block for this region only
+    betaByGroupCellR = cell(1, 3);
+    for b = 1:3
+        betaByGroupCellR{b} = collect_betas_for_block(unitsR, b, PredictorsByBlock{b}, groupsR, groupNamesR);
+    end
+
+    % New figure for this region
     fig = figure('Color','w','Units','pixels','Position',[100 100 1200 800]);
-    tl = tiledlayout(fig, numel(expectedPredictors), 1, 'TileSpacing', 'compact', 'Padding', 'compact');
-    title(tl, sprintf('%s | Block %d (%s) | GroupBy: %s', animalName, b, BlockKinds{b}, opt.GroupBy), 'Interpreter','none');
+    try
+        set(fig,'Units','inches'); pos = get(fig,'Position');
+        pos(2) = max(0, pos(2) - opt.FigureYOffsetInches);
+        set(fig,'Position',pos); set(fig,'Units','pixels');
+    catch
+    end
 
-    cmap = lines(numel(groupNames));
-    for pIx = 1:numel(expectedPredictors)
-        pred = expectedPredictors{pIx};
+    tl = tiledlayout(fig, numel(allPredictors), 1, 'TileSpacing', 'compact', 'Padding', 'compact');
+    title(tl, sprintf('%s | %s | Overlay across Blocks (fixed x-axis [%g, %g]) | Hist shaded + KDE line', ...
+        animalName, char(regionName), fixedMin, fixedMax), 'Interpreter','none');
+
+    blockColors = lines(3);
+    blockLabels = {'Block 1 (13)','Block 2 (2)','Block 3 (13)'};
+
+    for pIx = 1:numel(allPredictors)
+        pred = allPredictors{pIx};
         ax = nexttile(tl, pIx);
         hold(ax, 'on'); grid(ax, 'on');
 
-        edges = edgesByPred.(pred);
-        xlim(ax, [edges(1), edges(end)]);  % linked x-axis per predictor across blocks
+        edges = edgesFixedByPred.(pred);
+        xlim(ax, [fixedMin, fixedMax]);
 
-        hasData = false(1, numel(groupNames));
-        for g = 1:numel(groupNames)
-            vec = betaByGroup(g).(pred);
-            vec = vec(isfinite(vec));
-            if isempty(vec), continue; end
-            hasData(g) = true;
-            histogram(ax, vec, 'BinEdges', edges, 'Normalization', 'pdf', ...
-                      'FaceColor', cmap(g,:), 'FaceAlpha', 0.25, 'EdgeColor', 'none');
-            % Kernel density overlay (optional, robust)
-            if numel(vec) >= 5
-                try
-                    [f, xi] = ksdensity(vec);
-                    plot(ax, xi, f, 'Color', cmap(g,:), 'LineWidth', 2, 'DisplayName', sprintf('%s (n=%d)', groupNames{g}, numel(vec)));
-                catch
-                    % skip if ksdensity unavailable
+        % Vertical zero line
+        xline(ax, 0, '-', 'Color', [0 0 0], 'LineWidth', 1, 'HandleVisibility', 'off');
+
+        lgHandles = gobjects(0);
+        lgLabels  = {};
+        hasAnyData = false;
+
+        for b = 1:3
+            % Only overlay if this block includes the predictor
+            if ~any(strcmp(PredictorsByBlock{b}, pred)), continue; end
+
+            % Raw data vector (betas) for this region/block/predictor
+            vecAll = [];
+            BBG = betaByGroupCellR{b};
+            for g = 1:numel(BBG)
+                if isfield(BBG(g), pred)
+                    vecAll = [vecAll, BBG(g).(pred)]; %#ok<AGROW>
+                end
+            end
+            vecAll = vecAll(isfinite(vecAll));
+            if isempty(vecAll), continue; end
+            hasAnyData = true;
+
+            % 1) Raw histogram (shaded bins, no edges)
+            histogram(ax, vecAll, 'BinEdges', edges, 'Normalization', 'pdf', ...
+                      'FaceColor', blockColors(b,:), 'FaceAlpha', opt.ShadeAlpha, ...
+                      'EdgeColor', 'none', 'HandleVisibility', 'off');
+
+            % 2) KDE line (optional)
+            if opt.OverlaySmooth && numel(vecAll) >= 5
+                xi_eval = linspace(fixedMin, fixedMax, opt.OverlaySmoothNumPoints);
+                if ~isempty(opt.OverlaySmoothBandwidth)
+                    [f, xi_eval] = ksdensity(vecAll, xi_eval, 'Bandwidth', opt.OverlaySmoothBandwidth);
+                    bw_used = opt.OverlaySmoothBandwidth;
+                else
+                    % Get auto bandwidth, then use a reduced bandwidth for less smoothing (factor = 5)
+                    [~, ~, bw_auto] = ksdensity(vecAll, xi_eval);
+                    bw_used = bw_auto/5;
+                    [f, xi_eval] = ksdensity(vecAll, xi_eval, 'Bandwidth', bw_used);
+                end
+                hL = plot(ax, xi_eval, f, 'Color', blockColors(b,:), 'LineWidth', opt.OverlayLineWidth, ...
+                          'LineStyle', '-', 'DisplayName', sprintf('%s n=%d', blockLabels{b}, numel(vecAll)));
+                lgHandles(end+1) = hL; lgLabels{end+1} = hL.DisplayName;
+
+                if opt.Verbose
+                    fprintf('[beta plots] %s BW (Block %d, %s): %.4g (n=%d)\n', char(regionName), b, pred, bw_used, numel(vecAll));
                 end
             else
-                m = mean(vec, 'omitnan');
-                xline(ax, m, '-', sprintf('%s mean=%.3f (n=%d)', groupNames{g}, m, numel(vec)), 'Color', cmap(g,:), 'LineWidth', 1.5);
+                % If smoothing disabled or too few samples, show a mean marker
+                m = mean(vecAll, 'omitnan');
+                hMean = xline(ax, m, '-', 'Color', blockColors(b,:), 'LineWidth', opt.OverlayLineWidth, ...
+                              'DisplayName', sprintf('%s n=%d (mean=%.3f)', blockLabels{b}, numel(vecAll), m));
+                lgHandles(end+1) = hMean; lgLabels{end+1} = hMean.DisplayName;
             end
         end
 
         xlabel(ax, sprintf('Beta (%s)', pred));
         ylabel(ax, 'Density');
         title(ax, pred);
-        if any(hasData), legend(ax, 'Location', 'best'); else, text(ax, 0.5, 0.5, 'No data', 'Units','normalized', 'HorizontalAlignment','center'); end
+        if hasAnyData
+            legend(ax, lgHandles, lgLabels, 'Location', 'best');
+        else
+            text(ax, 0.5, 0.5, 'No data', 'Units','normalized', 'HorizontalAlignment', 'center');
+        end
     end
 
-    % Save PNG (optional)
+    % --- Optional save per region ---
     if opt.SavePNGs
-        outPng = fullfile(outDir, sprintf('%s_Block%d_%s_GroupBy_%s.png', animalName, b, BlockKinds{b}, opt.GroupBy));
+        % Optional: save into a region subfolder for clarity
+        outDirR = fullfile(outDir, char(regionName));  % e.g., .../GLM_Beta_Distributions/PPC
+        if ~exist(outDirR, 'dir'), mkdir(outDirR); end
+
+        outPng = fullfile(outDirR, sprintf('%s_%s_OverlayBlocks_FixedAxis.png', animalName, char(regionName)));
         try
+            drawnow;  % ensure figure is rendered
             exportgraphics(fig, outPng, 'Resolution', 200);
             fprintf('[beta plots] Saved %s\n', outPng);
-        % catch ME
-        %     warning('[beta plots] Failed to save PNG: %s', ME.message);
+        catch ME
+            warning('Failed to save %s: %s', outPng, ME.message);
         end
+
+        % Optional: close(fig);  % to reduce window clutter
     end
 end
 
 fprintf('[beta plots] Done. Output dir: %s\n', outDir);
-end
-
-% ---------------- Helpers ----------------
-function label = detect_cell_type_label(u)
-candidates = {'CellType','cell_type','WaveformClass','waveform_class','Type','type','Class','class'};
-label = 'Unknown';
-for i = 1:numel(candidates)
-    fn = candidates{i};
-    if isfield(u, fn) && ~isempty(u.(fn))
-        try
-            v = string(u.(fn));
-            if strlength(v) > 0
-                label = char(v);
-                return;
-            end
-        catch
-        end
-    end
-end
-end
-
-function globalLimits = compute_global_limits(unitsAll, predictors, BlockKinds, padFrac)
-% Aggregate all betas across all blocks and compute global min/max per predictor
-globalLimits = struct();
-for p = 1:numel(predictors)
-    pred = predictors{p};
-    allVals = [];
-    for b = 1:numel(BlockKinds)
-        glmField = sprintf('Block%d', b);
-        for c = 1:numel(unitsAll)
-            if ~isfield(unitsAll(c),'GLM') || ~isfield(unitsAll(c).GLM, glmField), continue; end
-            G = unitsAll(c).GLM.(glmField);
-            if ~isfield(G,'b_coeffs') || ~isfield(G,'names') || isempty(G.b_coeffs), continue; end
-            names = string(G.names(:)');
-            betas = double(G.b_coeffs(:)');
-            ix = find(names == string(pred), 1, 'first');
-            if ~isempty(ix)
-                val = betas(ix);
-                if isfinite(val), allVals(end+1) = val; %#ok<AGROW>
-                end
-            end
-        end
-    end
-    if isempty(allVals)
-        globalLimits.(pred) = [-1, 1]; % fallback
-    else
-        mn = min(allVals);
-        mx = max(allVals);
-        if mn == mx
-            % expand tiny range so bins work
-            delta = max(1e-6, abs(mn)*0.01);
-            mn = mn - delta; mx = mx + delta;
-        end
-        span = mx - mn;
-        pad = padFrac * span;
-        globalLimits.(pred) = [mn - pad, mx + pad];
-    end
-end
-end
-
-function edgesByPred = make_hist_edges(predList, globalLimits, binWidth, numBins)
-% Build consistent histogram edges per predictor using global limits
-edgesByPred = struct();
-for p = 1:numel(predList)
-    pred = predList{p};
-    lim = globalLimits.(pred);
-    if ~isempty(binWidth)
-        % Fixed width edges
-        start = lim(1);
-        stop  = lim(2);
-        nSteps = max(1, ceil((stop - start) / binWidth));
-        edges = linspace(start, stop, nSteps+1);
-    elseif ~isempty(numBins)
-        edges = linspace(lim(1), lim(2), numBins+1);
-    else
-        % MATLAB default NumBins with consistent edges per tile: choose 30
-        edges = linspace(lim(1), lim(2), 30+1);
-    end
-    edgesByPred.(pred) = edges;
-end
-end
-
-function betaByGroup = collect_betas_for_block(unitsAll, blockNum, expectedPredictors, groups, groupNames)
-% Build struct per group with vectors of betas per expected predictor for one block
-% Strict: no fallbacks; normalizes groupNames/groups to string arrays.
-
-% Normalize types
-groupNames = string(groupNames(:));  % ensure column string array
-groups     = string(groups(:));      % ensure column string array
-
-% Initialize output struct
-betaByGroup = struct();
-for g = 1:numel(groupNames)
-    betaByGroup(g).Group = groupNames(g);  % keep as string
-    for p = 1:numel(expectedPredictors)
-        betaByGroup(g).(expectedPredictors{p}) = [];
-    end
-end
-
-% Iterate units
-for c = 1:numel(unitsAll)
-    gName = groups(c);
-    gIdx  = find(groupNames == gName, 1, 'first');
-    if isempty(gIdx), continue; end
-
-    glmField = sprintf('Block%d', blockNum);
-    if ~isfield(unitsAll(c), 'GLM') || ~isfield(unitsAll(c).GLM, glmField)
-        continue;
-    end
-    G = unitsAll(c).GLM.(glmField);
-    if ~isfield(G,'b_coeffs') || ~isfield(G,'names') || isempty(G.b_coeffs) || isempty(G.names)
-        continue;
-    end
-
-    names = string(G.names(:)');
-    betas = double(G.b_coeffs(:)');
-
-    % Map betas into expected predictor order; missing predictors get NaN
-    for p = 1:numel(expectedPredictors)
-        pred = string(expectedPredictors{p});
-        ix = find(names == pred, 1, 'first');
-        val = NaN;
-        if ~isempty(ix)
-            val = betas(ix);
-        end
-        predChar = char(pred);  % dynamic field name must be char
-        betaByGroup(gIdx).(predChar) = [betaByGroup(gIdx).(predChar), val]; %#ok<AGROW>
-    end
-end
 end
