@@ -3,25 +3,25 @@ function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] 
 % Drop-in replacement matching legacy I/O, with RS-sample occupancy and speed gating.
 % Preserves:
 %   - pos_x < 9 filter
-%   - transitions by diff(pos_y) < -300 (now paired robustly)
-%   - trimming of trans_beg/trans_end (applied to paired starts/ends together)
-%   - halls extraction aligned to trimmed pairs
+%   - transitions by diff(pos_y) < -300
+%   - trimming of trans_beg/trans_end
+%   - halls extraction from pos_x at transitions
 %   - 150 Hz resample and adjustable speed threshold (cm/s)
 %
 % Improvements:
 %   - Occupancy computed from uniformly resampled samples (RS), summing dt per bin using only "fast" samples
-%   - Optional bin-level median speed gating (bins with median speed <= threshold => NaN)
+%   - Optional bin-level median speed gating (bins with median speed <= threshold are set to NaN when enabled)
 %   - Instantaneous speed via centered derivative (gradient)
 %   - interval_data enriched with rs_bin_idx and fast RS indices
 
-    % ---------- Parse options ----------
+    % Parse options
     p = inputParser;
     addParameter(p, 'SpeedThresh', 2.5, @(x)isnumeric(x)&&isscalar(x)&&x>=0);
     addParameter(p, 'UseMedianSpeedMask', true, @(x)islogical(x)&&isscalar(x));
     parse(p, varargin{:});
     opt = p.Results;
 
-    % ---------- Find CSV (folder or parent) ----------
+    % ---- Find CSV (folder or parent) ----
     fname_candidates = {'CSVtableRHDts_Nans.csv','CSVtableRHDts_Nans'};
     search_paths = {CsvFolder};
     parent = fileparts(CsvFolder);
@@ -39,48 +39,27 @@ function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] 
         error('CSVtableRHDts_Nans not found in %s or parent', CsvFolder);
     end
 
-    % ---------- Load & scale ----------
+    % ---- Load & scale ----
     tbl_loc = readtable(fpath);
-    tbl_loc.pos_y = tbl_loc.pos_y * 5.3;   % Convert to cm
+    tbl_loc.pos_y = tbl_loc.pos_y * 5.3; % Convert to cm
     maxRHD_ts = max(tbl_loc.RHD_ts);
 
-    % ---------- ORIGINAL FILTER ----------
+    % ---- ORIGINAL FILTER ----
     tbl_loc = tbl_loc(tbl_loc.pos_x < 9, :);
 
-    % ---------- ORIGINAL TRANSITIONS (robust pairing + trimming) ----------
-    trans = find(diff(tbl_loc.pos_y) < -300);  % indices in raw stream
+    % ---- ORIGINAL TRANSITIONS ----
+    trans = find(diff(tbl_loc.pos_y) < -300);
+    trans_end = tbl_loc.RHD_ts(trans);
+    trans_beg = tbl_loc.RHD_ts(trans+1);
 
-    % Candidate start/end times from same indices (note the +/- 1)
-    beg_candidates = tbl_loc.RHD_ts(trans + 1);
-    end_candidates = tbl_loc.RHD_ts(trans);
+    % Original trimming
+    trans_end = trans_end(trans_end > min(trans_beg));
+    trans_beg = trans_beg(trans_beg < max(trans_end));
 
-    % Valid pairs require end > beg
-    valid = isfinite(beg_candidates) & isfinite(end_candidates) & (end_candidates > beg_candidates);
+    % ORIGINAL HALLS extraction
+    halls = tbl_loc.pos_x(trans(1:length(trans_beg)) + 1);
 
-    if any(valid)
-        beg_candidates = beg_candidates(valid);
-        end_candidates = end_candidates(valid);
-        trans_valid_idx = trans(valid);  % keep aligned indices for halls
-
-        % Inner trimming (drop edge artifacts) applied to paired vectors together
-        inner = (end_candidates > min(beg_candidates)) & (beg_candidates < max(end_candidates));
-        trans_beg = beg_candidates(inner);
-        trans_end = end_candidates(inner);
-        trans_idx_for_halls = trans_valid_idx(inner);  % aligned with trimmed pairs
-    else
-        trans_beg = [];
-        trans_end = [];
-        trans_idx_for_halls = [];
-    end
-
-    % HALLS extraction aligned to trimmed pairs
-    if ~isempty(trans_idx_for_halls)
-        halls = tbl_loc.pos_x(trans_idx_for_halls + 1);
-    else
-        halls = [];
-    end
-
-    % ---------- Early exit if no trials ----------
+    % ---- Early exit if no trials ----
     if isempty(trans_beg) || isempty(trans_end)
         fprintf('[behavior] WARNING: No trials detected (transitions=%d). Check inputs.\n', numel(trans));
         interval_data = {};
@@ -88,20 +67,20 @@ function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] 
         return;
     end
 
-    % ---------- Parameters ----------
+    % ---- Parameters ----
     upsam_freq   = 150;               % Hz
     dt           = 1 / upsam_freq;    % seconds per RS sample
     Bin_edges    = 0:4:534;           % 4 cm bin edges
     nBins        = numel(Bin_edges) - 1;
-    speed_thresh = opt.SpeedThresh;
+    speed_thresh = opt.SpeedThresh;   % use the parsed option
 
-    % ---------- Outputs ----------
+    % ---- Outputs ----
     occupancy_4cm = NaN(length(trans_beg), nBins);
     interval_data = cell(1, length(trans_beg));
 
-    % ---------- Process each trial ----------
+    % ---- Process each trial ----
     for i = 1:length(trans_beg)
-        % Within-trial mask
+        % Mask within trial times
         mask = (tbl_loc.RHD_ts >= trans_beg(i)) & (tbl_loc.RHD_ts <= trans_end(i));
         ts = tbl_loc.RHD_ts(mask);
         ps = tbl_loc.pos_y(mask);
@@ -121,9 +100,13 @@ function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] 
             ps_RS = fillmissing(ps_RS, 'linear', 'EndValues', 'nearest');
         end
 
-        % Instantaneous speed (cm/s) via centered derivative
-        v_inst    = gradient(ps_RS, ts_RS);
-        fast_mask = v_inst > speed_thresh;  % forward-only, match legacy intent
+        % Optional clamp to bin range (protect against tiny negative/overflow excursions)
+        % Right-open last edge: avoid exactly at Bin_edges(end)
+        % ps_RS = min(max(ps_RS, Bin_edges(1)), Bin_edges(end) - eps);
+
+        % Robust instantaneous speed (centered derivative)
+        v_inst    = gradient(ps_RS, ts_RS);   % cm/s
+        fast_mask = v_inst > speed_thresh;    % forward-only
 
         % RS sample-to-bin mapping
         rs_bin_idx = discretize(ps_RS, Bin_edges);
@@ -137,7 +120,7 @@ function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] 
             occ_row = zeros(1, nBins);
         end
 
-        % Median speed per bin (diagnostic; optional masking)
+        % Bin-level median speed (always compute for diagnostics; mask optionally)
         valid_idx = ~isnan(rs_bin_idx);
         if any(valid_idx)
             bin_speed = accumarray(rs_bin_idx(valid_idx)', v_inst(valid_idx)', [nBins,1], @nanmedian, NaN);
@@ -145,13 +128,13 @@ function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] 
             bin_speed = nan(nBins,1);
         end
 
-        % Apply bin-level median speed gate if enabled
+        % Apply the median speed gate only if toggled ON
         if opt.UseMedianSpeedMask
             low_speed_bins = bin_speed <= speed_thresh;
             occ_row(low_speed_bins) = NaN;
         end
 
-        % Store occupancy row
+        % Store occupancy
         occupancy_4cm(i, :) = occ_row;
 
         % Build interval_data for downstream usage
@@ -163,7 +146,7 @@ function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] 
             'speed_idx_raster', speed_idx_raster, ...
             'valid_pos_idx', speed_idx_raster, ...     % same as fast_mask indices
             'rs_bin_idx', rs_bin_idx, ...
-            'speed_bins', bin_speed(:)', ...           % per-bin median speed (cm/s)
+            'speed_bins', bin_speed(:)', ...           % per-bin median speed (cm/s), always defined
             'bin_centers', bin_centers);
     end
 
