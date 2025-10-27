@@ -3,12 +3,30 @@ function legacy_plot_unit_page(fig, unit, clusterID, rate_mean_halls, raster_dat
 % LEGACY_PLOT_UNIT_PAGE
 % One page per unit: raster + rate panels per block, with informative labels via get_scene_lookup.
 %
-% NEW: unit_spike_counts parameter (optional) - [7 x nBlocks] spike counts per type per block
+% Inputs (key ones):
+%   rate_mean_halls{b} : [nUnits x nBins x 7] means for block b
+%   raster_data{u,tr}  : struct with fields .times (s) and .positions (cm)
+%   halls(tr)          : trial-type code 1..7
+%   Blocks{b}          : list of trial indices belonging to block b
+%   tt_counts{b}(TT)   : number of trials for TT in block b
+%   binCenters         : [nBins x 1] position centers
+%   opt.SmoothingWin   : smoothing sigma (cm)
+%   opt.ShowTrialIDs   : show y tick labels (trial IDs) on raster
+%   opt.RasterMarkerSize: marker size for raster
+%   opt.TitlePrefix    : string for title
+%   sc_all             : optional array of cluster IDs for spike file membership
+%   metadataTable      : optional table for metadata lines
+%   unit_spike_counts  : optional [7 x nBlocks] spike counts for this unit
+%
+% NEW: robust handling of empty sc_all (no NaN->logical warnings)
 
-% Handle optional spike counts
-if nargin < 14
+% Handle optional args
+if nargin < 15 || isempty(unit_spike_counts)
     unit_spike_counts = [];
 end
+if nargin < 14 || isempty(opt),           opt = struct(); end
+if nargin < 13 || isempty(metadataTable), metadataTable = table(); end
+if nargin < 12 || isempty(sc_all),        sc_all = []; end
 
 nBlocks = numel(Blocks);
 
@@ -17,17 +35,19 @@ tl = tiledlayout(fig, 1 + nBlocks, 1, 'TileSpacing', 'compact', 'Padding', 'comp
 
 % Row 1: Raster
 axR = nexttile(tl, 1);
-plot_raster_legacy(axR, raster_data, halls, unit, Blocks, xMin, xMax, opt.ShowTrialIDs, opt.RasterMarkerSize);
+plot_raster_legacy(axR, raster_data, halls, unit, Blocks, xMin, xMax, ...
+    getOpt(opt,'ShowTrialIDs',false), getOpt(opt,'RasterMarkerSize',2));
 title(axR, 'Position Raster - All Trials');
 xlim(axR, [xMin, xMax]);
 
 % Rows 2+: Rate curves per block (with scene labels and spike counts)
-axRates = plot_rate_curves_legacy(tl, rate_mean_halls, unit, Blocks, tt_counts, binCenters, xMin, xMax, nBlocks, opt, unit_spike_counts);
+axRates = plot_rate_curves_legacy(tl, rate_mean_halls, unit, Blocks, tt_counts, binCenters, ...
+    xMin, xMax, nBlocks, opt, unit_spike_counts);
 
 % Shared y-limits across rate panels
 set_shared_ylims(axRates);
 
-% Title with metadata
+% Title with metadata (robust to empty sc_all)
 add_title_legacy(tl, unit, clusterID, sc_all, metadataTable, opt);
 end
 
@@ -35,7 +55,7 @@ end
 function plot_raster_legacy(ax, raster_data, halls, unit, Blocks, xMin, xMax, showTrialIDs, markerSize)
 hold(ax, 'on');
 colors = get_trial_type_colormap();
-nCols = size(raster_data, 2);
+nCols  = size(raster_data, 2);
 y = 1;
 y_ticks = [];
 y_labels = [];
@@ -52,17 +72,19 @@ for b = 1:numel(Blocks)
     block_starts(b) = y;
     trials = Blocks{b}(:);
     block_spikes = 0;
+
     for k = 1:numel(trials)
         tr = trials(k);
         if tr < 1 || tr > nCols || unit < 1 || unit > size(raster_data, 1)
-            y = y + 1;
+            y = y + 1; %#ok<AGROW>
             continue;
         end
         C = raster_data{unit, tr};
         if isempty(C) || ~isfield(C, 'positions') || isempty(C.positions)
-            y = y + 1;
+            y = y + 1; %#ok<AGROW>
             continue;
         end
+
         xs = C.positions;
         if ~isempty(xs)
             % Determine color
@@ -70,23 +92,26 @@ for b = 1:numel(Blocks)
             if tr <= numel(halls) && isfinite(halls(tr)) && halls(tr) >= 1 && halls(tr) <= 7
                 col = colors(halls(tr), :);
             end
-            nSpikes  = numel(xs);
-            all_x    = [all_x; xs(:)]; %#ok<AGROW>
-            all_y    = [all_y; y*ones(nSpikes, 1)]; %#ok<AGROW>
+            nSpikes   = numel(xs);
+            all_x     = [all_x; xs(:)]; %#ok<AGROW>
+            all_y     = [all_y; y*ones(nSpikes, 1)]; %#ok<AGROW>
             all_colors = [all_colors; repmat(col, nSpikes, 1)]; %#ok<AGROW>
             block_spikes = block_spikes + nSpikes;
         end
+
         if showTrialIDs
-            y_ticks(end+1) = y; %#ok<AGROW>
+            y_ticks(end+1)  = y; %#ok<AGROW>
             y_labels(end+1) = tr; %#ok<AGROW>
         end
-        y = y + 1;
+        y = y + 1; %#ok<AGROW>
     end
+
     block_ends(b) = y - 1;
     block_spike_counts(b) = block_spikes;
+
     if b < numel(Blocks)
         plot(ax, [xMin, xMax], [y-0.5, y-0.5], 'k-', 'LineWidth', 1.2);
-        y = y + 1;
+        y = y + 1; %#ok<AGROW>
     end
 end
 
@@ -136,9 +161,13 @@ lineWidth = 2 * ones(1, 7);
 lineStyle{7} = '--';
 lineWidth(7) = 1.0;
 
-% Bin width in cm
-binWidth_cm = (numel(binCenters) >= 2) * (binCenters(2) - binCenters(1)) + (numel(binCenters) < 2) * 4;
-sigma_bins = max(0, opt.SmoothingWin) / binWidth_cm; % convert sigma from cm to bins
+% Bin width in cm (assume ~uniform); sigma in bins
+if numel(binCenters) >= 2
+    binWidth_cm = binCenters(2) - binCenters(1);
+else
+    binWidth_cm = 4; % default
+end
+sigma_bins = max(0, getOpt(opt,'SmoothingWin',8)) / max(eps, binWidth_cm); % convert sigma from cm to bins
 
 % Allowed trial types per block parity (legacy behavior)
 allowedTTs = cell(1, nBlocks);
@@ -151,6 +180,9 @@ for b = 1:nBlocks
 end
 
 % Build label map per block via get_scene_lookup
+fileNum = getOpt(opt,'FileNum',NaN);
+isEven  = getOpt(opt,'IsEvenFile',false);
+
 for b = 1:nBlocks
     ax = nexttile(tl, b + 1);
     axRates(b) = ax;
@@ -172,7 +204,7 @@ for b = 1:nBlocks
 
     % Scene label lookup for this block
     try
-        labelMap = get_scene_lookup(opt.FileNum, opt.IsEvenFile, b);
+        labelMap = get_scene_lookup(fileNum, isEven, b);
     catch
         % Fallback if helper is missing
         labelMap = containers.Map('KeyType','double','ValueType','char');
@@ -186,9 +218,12 @@ for b = 1:nBlocks
     end
 
     for TT = allowedTTs{b}
-        if tt_counts{b}(TT) == 0, continue; end
+        if isempty(tt_counts) || isempty(tt_counts{b}) || tt_counts{b}(TT) == 0
+            continue;
+        end
         r = get_unit_type_slice(Rb, unit, TT);
         if isempty(r) || ~any(isfinite(r)), continue; end
+
         r = gaussian_smooth(r, sigma_bins);
         if ~any(isfinite(r)), continue; end
 
@@ -201,7 +236,7 @@ for b = 1:nBlocks
 
         h = plot(ax, binCenters, r, 'Color', cmap(TT,:), 'LineStyle', lineStyle{TT}, 'LineWidth', lineWidth(TT));
         plottedHandles(end+1) = h; %#ok<AGROW>
-        
+
         % Build legend label with spike counts (when available)
         if ~isempty(unit_spike_counts) && size(unit_spike_counts, 2) >= b && size(unit_spike_counts, 1) >= TT
             spike_count = unit_spike_counts(TT, b);
@@ -228,7 +263,7 @@ for b = 1:nBlocks
     end
 end
 
-fprintf('[plot] SmoothingWin=%.2f cm -> sigma_bins=%.2f\n', opt.SmoothingWin, sigma_bins);
+fprintf('[plot] SmoothingWin=%.2f cm -> sigma_bins=%.2f\n', getOpt(opt,'SmoothingWin',8), sigma_bins);
 end
 
 function set_shared_ylims(axRates)
@@ -249,7 +284,7 @@ end
 end
 
 function add_title_legacy(tl, unit, clusterID, sc_all, metadataTable, opt)
-titleLine1 = sprintf('%sUnit %d | ClusterID: %g', char(opt.TitlePrefix), unit, clusterID);
+titleLine1 = sprintf('%sUnit %d | ClusterID: %g', char(getOpt(opt,'TitlePrefix','')), unit, clusterID);
 
 % Spike counts
 [spikeCount_npy, spikeCount_csv] = get_spike_counts(sc_all, clusterID, metadataTable);
@@ -257,9 +292,14 @@ titleLine1 = sprintf('%sUnit %d | ClusterID: %g', char(opt.TitlePrefix), unit, c
 % Metadata line
 [metaLine, hasMeta] = get_metadata_line(metadataTable, clusterID);
 
-% Alignment note
-inSpike = NaN;
-if ~isempty(sc_all), inSpike = any(sc_all == clusterID); end
+% In-spike-file flag (robust to empty sc_all)
+if isempty(sc_all)
+    inSpikeStr = 'n/a';
+else
+    inSpikeStr = tern(any(sc_all == clusterID), 'Yes', 'No');
+end
+
+% Spike info text
 spikeInfo = '';
 if ~isnan(spikeCount_npy) && ~isnan(spikeCount_csv)
     spikeInfo = sprintf(' | Spikes: NPY=%d, CSV=%d', spikeCount_npy, spikeCount_csv);
@@ -268,7 +308,8 @@ elseif ~isnan(spikeCount_npy)
 elseif ~isnan(spikeCount_csv)
     spikeInfo = sprintf(' | Spikes: CSV=%d', spikeCount_csv);
 end
-alignNote = sprintf('InSpikeFile:%s | Meta:%s%s', tern(isnan(inSpike),'n/a',tern(inSpike,'Yes','No')), tern(hasMeta,'OK','No'), spikeInfo);
+
+alignNote = sprintf('InSpikeFile:%s | Meta:%s%s', inSpikeStr, tern(hasMeta,'OK','No'), spikeInfo);
 
 % Title
 if hasMeta
@@ -279,6 +320,14 @@ end
 end
 
 %% ==================== Local helpers ====================
+function v = getOpt(s, name, dflt)
+if isstruct(s) && isfield(s, name) && ~isempty(s.(name))
+    v = s.(name);
+else
+    v = dflt;
+end
+end
+
 function cmap = get_trial_type_colormap()
 cmap = [
     0.000, 0.447, 0.741; % TT1 familiar
@@ -383,5 +432,11 @@ end
 end
 
 function s = tern(c, a, b)
-if c, s = a; else, s = b; end
+% Simple ternary. 'c' must be logical scalar (no NaN).
+if islogical(c) && isscalar(c)
+    if c, s = a; else, s = b; end
+else
+    % Fall back safely if someone passes non-logical
+    s = b;
+end
 end

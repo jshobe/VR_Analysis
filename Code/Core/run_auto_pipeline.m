@@ -10,12 +10,12 @@ REGIONS        = {'PPC','VC'};          % regions to process
 BLOCKS         = {[]};                  % passed to run_full_pipeline
 SMOOTHING_WIN  = 12;                    % passed to run_full_pipeline
 MAKE_PLOTS     = true;                  % set false to skip figures
-OUTPUT_ROOT    = fullfile(DATA_ROOT, 'Output');
+SAVE_PNGS      = true;                  % save PNGs alongside the region PDF
+PDF_FILENAME   = 'Legacy_AllUnits.pdf'; % FILENAME only (create_all_plots joins with region Figures/)
 %% ------------------------------------------------
 
 % Validate data root
 assert(isfolder(DATA_ROOT), 'Data root not found: %s', DATA_ROOT);
-if ~isfolder(OUTPUT_ROOT), mkdir(OUTPUT_ROOT); end
 
 % If no mouseID: choose via simple GUI list
 if nargin < 1 || isempty(mouseID)
@@ -44,22 +44,15 @@ for r = 1:numel(REGIONS)
     assert(isfolder(regionPath), 'Missing region folder: %s', regionPath);
 end
 
-% Prepare output locations
-outDir = fullfile(OUTPUT_ROOT, mouseID);
-if ~isfolder(outDir), mkdir(outDir); end
-pdfPath = fullfile(outDir, 'Legacy_AllUnits.pdf');
-pngDir  = fullfile(outDir, 'PNGs');
-if ~isfolder(pngDir), mkdir(pngDir); end
-
 fprintf('[%s] Running pipeline for %s\n', datestr(now), mouseID);
 
-% Strict call to the per-session driver
+% Strict call to the per-session driver (no PNGDir/SkipPlot; PDFName is a filename)
 run_full_pipeline(mousePath, REGIONS, ...
-    'Blocks',       BLOCKS, ...
-    'SmoothingWin', SMOOTHING_WIN, ...
-    'PDFName',      pdfPath, ...
-    'PNGDir',       pngDir, ...
-    'SkipPlot',     ~MAKE_PLOTS);
+    'Blocks',          BLOCKS, ...
+    'SmoothingWin',    SMOOTHING_WIN, ...
+    'PDFName',         PDF_FILENAME, ...
+    'SavePNGs',        SAVE_PNGS, ...
+    'MakeLegacyPlots', MAKE_PLOTS);
 
 fprintf('[%s] Finished %s\n', datestr(now), mouseID);
 end

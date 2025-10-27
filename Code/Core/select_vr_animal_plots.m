@@ -7,7 +7,7 @@ function select_vr_animal_plots(varargin)
 %   'BaseFolder'           : 'Z:\Justin\VR mice'
 %   'AnimalFolder'         : '' (GUI select if empty)
 %   'Regions'              : {'PPC','VC'}
-%   'Blocks'               : {12:174, 178:337, 341:520}
+%   'Blocks'               : {[]}  % default: all trials in one block
 %   'Overwrite'            : false (manual cache workflow)
 %   'SaveIntermediates'    : true
 %   'FiguresVisible'       : 'off'
@@ -18,42 +18,59 @@ function select_vr_animal_plots(varargin)
 %   'ShowTrialIDs'         : false
 %   'RasterMarkerSize'     : 2
 %   'SpeedThresh'          : 2.5 (cm/s; used in behavior + spikes)
-%   'UseMedianSpeedMask'   : true (mask bins by per-bin median speed; behavior only)
-%   'MakeLegacyPlots'      : true (legacy plotting; set false to skip)
-%   'SaveFIGs'             : false (legacy)
-%   'FIGDir'               : '' (legacy)
-%   'SaveOccupancyMaps'    : true  (NEW; save animal-wide occupancy PDF/PNGs)
-%   'OccupancyPDFName'     : 'Occupancy_Maps.pdf'   (NEW)
-%   'OccupancySavePNGs'    : false                  (NEW)
+%   'UseMedianSpeedMask'   : false (mask bins by per-bin median speed; behavior only)
+%   'MakeLegacyPlots'      : true  (legacy plotting on by default)
+%   'SaveFIGs'             : false
+%   'FIGDir'               : ''
+%   'FileNum'              : NaN     (for scene labels; used by get_scene_lookup)
+%   'IsEvenFile'           : false   (for scene labels)
+%   'SaveOccupancyMaps'    : true
+%   'OccupancyPDFName'     : 'Occupancy_Maps.pdf'
+%   'OccupancySavePNGs'    : false
 %
 % Notes:
-% - V2 FSC + 3D 4cm analysis is invoked per region via run_spatial_analysis_v2.
-% - Ensure run_spatial_analysis_v2.m is on your MATLAB path.
-% - The occupancy PDF is saved once per animal in VR##/Derived/Occupancy.
+% - Legacy plots are produced by process_region -> create_all_plots.
+% - V2 FSC + 3D 4cm analysis is invoked per region via run_spatial_analysis_v2 (plots off by default).
 
 % ---------------- Parse inputs ----------------
 p = inputParser;
 addParameter(p, 'BaseFolder', 'Z:\Justin\VR mice', @(s)ischar(s)||isstring(s));
 addParameter(p, 'AnimalFolder', '', @(s)ischar(s)||isstring(s));
 addParameter(p, 'Regions', {'PPC','VC'}, @iscell);
-addParameter(p, 'Blocks', {12:174, 178:337, 341:520}, @iscell);
+
+% Core convention: default to "all trials" in one block
+addParameter(p, 'Blocks', {[]}, @(x) iscell(x) || isnumeric(x));
+
 addParameter(p, 'Overwrite', false, @islogical);
 addParameter(p, 'SaveIntermediates', true, @islogical);
 addParameter(p, 'FiguresVisible', 'off', @ischar);
-addParameter(p, 'SmoothingWin', 4, @(x)isnumeric(x)&&isscalar(x)&&x>=0); % cm
+
+% Keep smoothing consistent with Core
+addParameter(p, 'SmoothingWin', 8, @(x)isnumeric(x)&&isscalar(x)&&x>=0); % cm
+
 addParameter(p, 'SavePNGs', false, @islogical);
 addParameter(p, 'PDFName', 'AllUnits_SpatialAnalysis.pdf', @(s)ischar(s)||isstring(s));
 addParameter(p, 'PDFContent', 'image', @(s)ischar(s)||isstring(s));
 addParameter(p, 'ShowTrialIDs', false, @islogical);
 addParameter(p, 'RasterMarkerSize', 2, @(v)isnumeric(v)&&isscalar(v)&&v>0);
 addParameter(p, 'SpeedThresh', 2.5, @(x)isnumeric(x)&&isscalar(x)&&x>=0);
-addParameter(p, 'UseMedianSpeedMask', false, @(x)islogical(x)&&isscalar(x));  % NEW
-addParameter(p, 'MakeLegacyPlots', false, @islogical);
+addParameter(p, 'UseMedianSpeedMask', false, @(x)islogical(x)&&isscalar(x));
+
+% Make legacy plots ON by default (your stated goal)
+addParameter(p, 'MakeLegacyPlots', true, @islogical);
+
 addParameter(p, 'SaveFIGs', false, @islogical);
 addParameter(p, 'FIGDir', '', @(s)ischar(s)||isstring(s));
-addParameter(p, 'SaveOccupancyMaps', true, @islogical);                      % NEW
-addParameter(p, 'OccupancyPDFName', 'Occupancy_Maps.pdf', @(s)ischar(s)||isstring(s));  % NEW
-addParameter(p, 'OccupancySavePNGs', false, @islogical);                     % NEW
+
+% Scene-labeling knobs used by legacy_plot_unit_page -> get_scene_lookup
+addParameter(p, 'FileNum', NaN, @(x) isnumeric(x) && isscalar(x));
+addParameter(p, 'IsEvenFile', false, @(x) islogical(x) && isscalar(x));
+
+% Occupancy exports
+addParameter(p, 'SaveOccupancyMaps', true, @islogical);
+addParameter(p, 'OccupancyPDFName', 'Occupancy_Maps.pdf', @(s)ischar(s)||isstring(s));
+addParameter(p, 'OccupancySavePNGs', false, @islogical);
+
 parse(p, varargin{:});
 opts = p.Results;
 
@@ -76,7 +93,7 @@ log_msg('SpeedThresh: %.3f cm/s | UseMedianSpeedMask: %d', opts.SpeedThresh, opt
 [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] = ...
     load_behavior_data(animal_folder, derived_dir, opts.Overwrite, opts.SaveIntermediates, ...
                        'SpeedThresh', opts.SpeedThresh, ...
-                       'UseMedianSpeedMask', opts.UseMedianSpeedMask);  % propagates mask
+                       'UseMedianSpeedMask', opts.UseMedianSpeedMask);
 
 % ---------------- Save animal-wide occupancy maps ----------------
 if opts.SaveOccupancyMaps
@@ -90,7 +107,7 @@ if opts.SaveOccupancyMaps
                 'SpeedThresh',        opts.SpeedThresh, ...
                 'UseMedianSpeedMask', opts.UseMedianSpeedMask);
         else
-            % Fallback inline helper (produces same PDF)
+            % Fallback inline helper (produces the same PDF)
             save_occupancy_maps_inline(animal_folder, occupancy_4cm, halls, opts.Blocks, ...
                 0:4:534, opts.OccupancyPDFName, opts.OccupancySavePNGs, ...
                 opts.SpeedThresh, opts.UseMedianSpeedMask);
@@ -114,6 +131,7 @@ for r = 1:numel(opts.Regions)
     if opts.MakeLegacyPlots
         log_msg('Processing %s (legacy)...', region);
         try
+            % Pass all opts through; process_region/create_all_plots will pick what they need
             process_region(region_folder, interval_data, occupancy_4cm, halls, ...
                 trans_beg, trans_end, maxRHD_ts, animal_folder, opts);
             log_msg('Finished region (legacy) %s', region);
@@ -124,26 +142,29 @@ for r = 1:numel(opts.Regions)
         log_msg('Skipping legacy plots for %s (MakeLegacyPlots=false)', region);
     end
 
-    % V2: FSC + 3D 4cm analysis (per region)
+    % V2: FSC + 3D 4cm analysis (per region) — plots off by default
     log_msg('[V2] Running spatial analysis for %s...', region);
     out_folder_v2 = fullfile(region_folder, 'Derived_V2');
     if ~exist(out_folder_v2, 'dir'), mkdir(out_folder_v2); end
 
     title_prefix = sprintf('%s | %s | ', get_name(animal_folder), get_name(region_folder));
 
-    run_spatial_analysis_v2(animal_folder, region_folder, out_folder_v2, ...
-        'Blocks',             opts.Blocks, ...
-        'SmoothingWin',       opts.SmoothingWin, ...
-        'SavePNGs',           opts.SavePNGs, ...
-        'PDFName',            opts.PDFName, ...
-        'TitlePrefix',        title_prefix, ...
-        'ShowTrialIDs',       opts.ShowTrialIDs, ...
-        'RasterMarkerSize',   opts.RasterMarkerSize, ...
-        'SpeedThresh',        opts.SpeedThresh, ...
-        'UseMedianSpeedMask', opts.UseMedianSpeedMask, ...  % passed to behavior within V2 if supported
-        'DoPlots',            false);  % set true if you want V2 plots now
-
-    log_msg('[V2] Finished %s. See %s', region, out_folder_v2);
+    try
+        run_spatial_analysis_v2(animal_folder, region_folder, out_folder_v2, ...
+            'Blocks',             opts.Blocks, ...
+            'SmoothingWin',       opts.SmoothingWin, ...
+            'SavePNGs',           opts.SavePNGs, ...
+            'PDFName',            opts.PDFName, ...
+            'TitlePrefix',        title_prefix, ...
+            'ShowTrialIDs',       opts.ShowTrialIDs, ...
+            'RasterMarkerSize',   opts.RasterMarkerSize, ...
+            'SpeedThresh',        opts.SpeedThresh, ...
+            'UseMedianSpeedMask', opts.UseMedianSpeedMask, ...
+            'DoPlots',            false);  % set true if you want V2 plots now
+        log_msg('[V2] Finished %s. See %s', region, out_folder_v2);
+    catch ME
+        log_msg('[V2] ERROR for %s: %s', region, ME.message);
+    end
 end
 
 log_msg('Done');
@@ -153,16 +174,14 @@ end
 function animal_folder = get_animal_folder(base_folder, animal_folder_input)
 % Get animal folder from input or GUI selection
 if isempty(animal_folder_input)
-    if ~isfolder(base_folder)
-        base_folder = pwd;
-    end
+    if ~isfolder(base_folder), base_folder = pwd; end
     animal_folder = uigetdir(base_folder, 'Select VR animal folder');
     if isequal(animal_folder, 0)
         log_msg('No folder selected. Aborting.');
         animal_folder = [];
     end
 else
-    animal_folder = animal_folder_input;
+    animal_folder = char(animal_folder_input);
     if ~isfolder(animal_folder)
         error('Animal folder not found: %s', animal_folder);
     end
@@ -172,6 +191,7 @@ end
 function s = format_blocks(blocks)
 % Format block ranges for display
 try
+    if isnumeric(blocks), blocks = {blocks}; end
     parts = cellfun(@(b) sprintf('%d:%d (n=%d)', min(b), max(b), numel(b)), ...
         blocks, 'UniformOutput', false);
     s = strjoin(parts, ' | ');
@@ -190,15 +210,15 @@ function log_msg(fmt, varargin)
 fprintf('[%s] %s\n', datestr(now, 'HH:MM:SS'), sprintf(fmt, varargin{:}));
 end
 
-%% ==================== Behavior loader (updated; warns on mismatch) ====================
+%% ==================== Behavior loader (manual cache workflow) ====================
 function [interval_data, occupancy_4cm, halls, trans_beg, trans_end, maxRHD_ts] = ...
     load_behavior_data(animal_folder, derived_dir, overwrite, save_intermediates, varargin)
-% Load cached behavior or compute from scratch (manual cache workflow).
+% Load cached behavior or compute from scratch.
 % Records speed_thresh and use_median_speed in cache; does NOT auto-invalidate, only warns on mismatch.
 
 p = inputParser;
 addParameter(p, 'SpeedThresh', 2.5, @(x)isnumeric(x)&&isscalar(x)&&x>=0);
-addParameter(p, 'UseMedianSpeedMask', true, @(x)islogical(x)&&isscalar(x));  % NEW
+addParameter(p, 'UseMedianSpeedMask', false, @(x)islogical(x)&&isscalar(x));
 parse(p, varargin{:});
 opt = p.Results;
 
@@ -209,7 +229,7 @@ if exist(cache_file, 'file') && ~overwrite
     log_msg('Loading behavior cache...');
     S = load(cache_file, 'interval_data','occupancy_4cm','halls', ...
                          'trans_beg','trans_end','maxRHD_ts', ...
-                         'speed_thresh','use_median_speed');  % NEW fields
+                         'speed_thresh','use_median_speed');
     interval_data = S.interval_data;
     occupancy_4cm = S.occupancy_4cm;
     halls         = S.halls;
@@ -242,14 +262,14 @@ catch ME
 end
 log_msg('Computed %d trials, %d bins', numel(interval_data), size(occupancy_4cm, 2));
 
-% Save cache (manual)
+% Save cache
 if save_intermediates
     try
         speed_thresh     = opt.SpeedThresh;        %#ok<NASGU>
         use_median_speed = opt.UseMedianSpeedMask; %#ok<NASGU>
         save(cache_file, 'interval_data','occupancy_4cm','halls', ...
                          'trans_beg','trans_end','maxRHD_ts', ...
-                         'speed_thresh','use_median_speed', '-v7.3');  % NEW
+                         'speed_thresh','use_median_speed', '-v7.3');
         log_msg('Saved behavior cache (SpeedThresh=%.3f, UseMedianSpeedMask=%d)', ...
                 opt.SpeedThresh, opt.UseMedianSpeedMask);
     catch ME
@@ -296,11 +316,10 @@ try
     cb = colorbar(ax1); cb.Label.String = 'Seconds per bin';
     xlabel(ax1, 'Position (cm)'); ylabel(ax1, 'Trial');
     title(ax1, compose_title('Occupancy by trial', speedThresh, useMask));
-    % Show NaNs as light gray
+    % Show NaNs as light gray (if supported)
     try
         set(get(ax1,'Children'), 'AlphaData', ~isnan(data));
     catch
-        % If AlphaData not supported, skip transparency
     end
     set(ax1, 'Color', [0.95 0.95 0.95]);
     exportgraphics(fig1, pdf_path, 'ContentType', 'image', 'BackgroundColor', 'white');
@@ -326,7 +345,8 @@ try
 
     % Panel 3: Per-block mean occupancy (all trial types)
     ax3 = nexttile(tl,2); hold(ax3,'on'); grid(ax3,'on');
-    if ~isempty(Blocks) && iscell(Blocks)
+    if ~isempty(Blocks)
+        if isnumeric(Blocks), Blocks = {Blocks}; end
         for b = 1:numel(Blocks)
             tr = Blocks{b}(:);
             tr = tr(tr>=1 & tr<=nTrials);

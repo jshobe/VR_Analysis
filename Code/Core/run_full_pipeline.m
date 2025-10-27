@@ -1,36 +1,43 @@
-function run_full_pipeline(animal_path, region_names, varargin)
-% RUN_FULL_PIPELINE  Compute Derived_V2 data and make legacy plots.
-%
-% Example:
-% run_full_pipeline('Z:\Justin\VR mice\VR42', {'PPC','VC'}, ...
-%     'Blocks', {12:174,178:337}, 'SmoothingWin', 12, ...
-%     'PDFName', 'Legacy_AllUnits.pdf');
+function run_full_pipeline(mousePath, regions, varargin)
+% RUN_FULL_PIPELINE
+% Thin wrapper that forwards options to the Core driver (select_vr_animal_plots).
+% Keeps run_auto_pipeline simple while preserving all the new knobs.
 
+% Defaults (lightweight; most are handled in select_vr_animal_plots)
 p = inputParser;
-addParameter(p, 'Blocks', {[]}, @(x) iscell(x) || isnumeric(x));
-addParameter(p, 'SmoothingWin', 12, @isscalar);
-addParameter(p, 'PDFName', 'Legacy_AllUnits.pdf', @ischar);
-addParameter(p, 'PNGDir', '', @ischar);
-addParameter(p, 'SkipPlot', false, @islogical);
+addParameter(p, 'Blocks', {[]});
+addParameter(p, 'SmoothingWin', 8);
+addParameter(p, 'SavePNGs', false);
+addParameter(p, 'PDFName', 'AllUnits_SpatialAnalysis.pdf');
+addParameter(p, 'MakeLegacyPlots', true);
+addParameter(p, 'ShowTrialIDs', false);
+addParameter(p, 'RasterMarkerSize', 2);
+addParameter(p, 'SpeedThresh', 2.5);
+addParameter(p, 'UseMedianSpeedMask', false);
+addParameter(p, 'SaveFIGs', false);
+addParameter(p, 'FIGDir', '');
+addParameter(p, 'FileNum', NaN);
+addParameter(p, 'IsEvenFile', false);
+addParameter(p, 'PNGDir', '', @(s)ischar(s)||isstring(s));  % <--- added, ignored
 parse(p, varargin{:});
 opt = p.Results;
 
-for r = 1:numel(region_names)
-    region      = region_names{r};
-    region_path = fullfile(animal_path, region);
-    derived_path = fullfile(region_path, 'Derived_V2');
-    if ~exist(derived_path, 'dir'), mkdir(derived_path); end
-
-    % ---- Step 1: Compute + save Derived_V2 data ----
-    save_v2_data(animal_path, region_path, derived_path, ...
-        'Blocks', opt.Blocks, 'SmoothingWin', opt.SmoothingWin);
-
-    % ---- Step 2: Make legacy figures ----
-    if ~opt.SkipPlot
-        plot_legacy_from_v2(animal_path, {region}, ...
-            'PDFName', opt.PDFName, 'PNGDir', opt.PNGDir);
-    end
-end
-
-log_msg('All regions complete for %s', animal_path);
+% Call the Core driver directly, pinning AnimalFolder to mousePath
+select_vr_animal_plots( ...
+    'BaseFolder', fileparts(mousePath), ...
+    'AnimalFolder', mousePath, ...
+    'Regions', regions, ...
+    'Blocks', opt.Blocks, ...
+    'SmoothingWin', opt.SmoothingWin, ...
+    'SavePNGs', opt.SavePNGs, ...
+    'PDFName', opt.PDFName, ...
+    'MakeLegacyPlots', opt.MakeLegacyPlots, ...
+    'ShowTrialIDs', opt.ShowTrialIDs, ...
+    'RasterMarkerSize', opt.RasterMarkerSize, ...
+    'SpeedThresh', opt.SpeedThresh, ...
+    'UseMedianSpeedMask', opt.UseMedianSpeedMask, ...
+    'SaveFIGs', opt.SaveFIGs, ...
+    'FIGDir', opt.FIGDir, ...
+    'FileNum', opt.FileNum, ...
+    'IsEvenFile', opt.IsEvenFile);
 end
