@@ -1,159 +1,165 @@
-function [FastSummaryWide, UnfSummaryWide] = extra_filter2()
-% EXTRA_FILTER
-% Pick a VR## folder and build per-unit, per-region wide summaries.
-% Saves a structured .mat file containing summary tables and hierarchical
-% trial-by-trial RawData per unit.
-%
-% OUTPUT .mat structure layout:
-%   SummaryStruct.Animal
-%   SummaryStruct.Folder
-%   SummaryStruct.FastSummary
-%   SummaryStruct.UnfilteredSummary
-%   SummaryStruct.RawData.Fast.Unit_001.trial_001.Block / Count / etc.
-%   SummaryStruct.RawData.Unfiltered.Unit_001.trial_001.Block / Count / etc.
+function [FastSummaryWide, UnfSummaryWide] = extra_filter()
+% EXTRA_FILTER (multi-animal)
+% Multi-select VR## folders; build and save per-unit summaries for each animal.
+% Returns concatenated Fast/Unfiltered summary tables across all selected animals.
 
-%% --- Select animal folder ---
-root = uigetdir(pwd, 'Select VR## animal folder');
-if isequal(root,0)
-    error('No folder selected.');
-end
-[~, animal] = fileparts(root);
+%% --- pick one or more VR## folders ---
+roots = pick_vr_dirs();
+if isempty(roots), error('No folders selected.'); end
 
-regions = {'PPC','VC'};
-FastUnitTrials = table();   % Animal, Region, Block, Trial, UnitID, Count
-UnfUnitTrials  = table();
+% collectors across animals (returned)
+FastSummaryWide = table();
+UnfSummaryWide  = table();
 
-%% --- Load data from each region ---
-for i = 1:numel(regions)
-    region_folder = fullfile(root, regions{i});
-    if ~isfolder(region_folder)
-        error('Region folder not found: %s', region_folder);
-    end
+%% --- loop animals ---
+for aidx = 1:numel(roots)
+    root = roots{aidx};
+    [~, animal] = fileparts(root);
 
-    v2mat = fullfile(region_folder, 'Derived_V2', 'spatial_analysis_v2.mat');
-    if ~isfile(v2mat)
-        error('V2 MAT not found: %s', v2mat);
-    end
+    regions = {'PPC','VC'};
+    FastUnitTrials = table();   % Animal, Region, Block, Trial, UnitID, Count
+    UnfUnitTrials  = table();
 
-    S = load(v2mat, 'Blocks', 'raster_data', 'unit_summary', 'cluster_id_good');
-    req = {'Blocks','raster_data','unit_summary','cluster_id_good'};
-    for k = 1:numel(req)
-        if ~isfield(S, req{k})
-            error('Missing field "%s" in %s', req{k}, v2mat);
+    % -------- per region load --------
+    for i = 1:numel(regions)
+        region_folder = fullfile(root, regions{i});
+        if ~isfolder(region_folder), error('Region folder not found: %s', region_folder); end
+        v2mat = fullfile(region_folder,'Derived_V2','spatial_analysis_v2.mat');
+        if ~isfile(v2mat), error('V2 MAT not found: %s', v2mat); end
+
+        S = load(v2mat,'Blocks','raster_data','unit_summary','cluster_id_good');
+        req = {'Blocks','raster_data','unit_summary','cluster_id_good'};
+        for k = 1:numel(req)
+            if ~isfield(S, req{k}), error('Missing field "%s" in %s', req{k}, v2mat); end
         end
-    end
-    if ~isfield(S.unit_summary, 'trial_counts')
-        error('Missing unit_summary.trial_counts in %s', v2mat);
-    end
+        if ~isfield(S.unit_summary,'trial_counts')
+            error('Missing unit_summary.trial_counts in %s', v2mat);
+        end
 
-    Blocks      = S.Blocks;                       % {1x3} cell, trial indices
-    raster_data = S.raster_data;                  % {nUnits x nTrials} with .positions
-    trialCounts = S.unit_summary.trial_counts;    % [nUnits x nTrials]
-    unitIDs     = S.cluster_id_good(:);
+        Blocks      = S.Blocks;                       % {1x3} cell
+        raster_data = S.raster_data;                  % {nUnits x nTrials}
+        trialCounts = S.unit_summary.trial_counts;    % [nUnits x nTrials]
+        unitIDs     = S.cluster_id_good(:);
 
-    % sanity checks
-    if numel(Blocks) ~= 3
-        error('Expected exactly 3 blocks; found %d in %s', numel(Blocks), v2mat);
-    end
-    if size(trialCounts,1) ~= numel(unitIDs)
-        error('trial_counts rows (%d) != number of units (%d)', size(trialCounts,1), numel(unitIDs));
-    end
-    if size(raster_data,1) ~= numel(unitIDs)
-        error('raster_data rows (%d) != number of units (%d)', size(raster_data,1), numel(unitIDs));
-    end
+        % strict checks
+        if numel(Blocks) ~= 3
+            error('Expected exactly 3 blocks; found %d in %s', numel(Blocks), v2mat);
+        end
+        if size(trialCounts,1) ~= numel(unitIDs)
+            error('trial_counts rows (%d) != number of units (%d)', size(trialCounts,1), numel(unitIDs));
+        end
+        if size(raster_data,1) ~= numel(unitIDs)
+            error('raster_data rows (%d) != number of units (%d)', size(raster_data,1), numel(unitIDs));
+        end
 
-    % ---- FAST-ONLY: per unit per trial ----
-    f_rows = [];
-    for b = 1:3
-        trList = Blocks{b}(:)';
-        for tr = trList
-            for u = 1:numel(unitIDs)
-                c = 0;
-                C = raster_data{u,tr};
-                if ~isempty(C) && isfield(C,'positions') && ~isempty(C.positions)
-                    c = numel(C.positions);
+        % ---- FAST: per unit per trial ----
+        f_rows = [];
+        for b = 1:3
+            trList = Blocks{b}(:)';
+            for tr = trList
+                for u = 1:numel(unitIDs)
+                    c = 0;
+                    C = raster_data{u,tr};
+                    if ~isempty(C) && isfield(C,'positions') && ~isempty(C.positions)
+                        c = numel(C.positions);
+                    end
+                    f_rows = [f_rows; b, tr, unitIDs(u), c]; %#ok<AGROW>
                 end
-                f_rows = [f_rows; b, tr, unitIDs(u), c]; %#ok<AGROW>
             end
         end
-    end
-    Ft = table(repmat(string(animal), size(f_rows,1),1), ...
-               repmat(string(regions{i}), size(f_rows,1),1), ...
-               f_rows(:,1), f_rows(:,2), f_rows(:,3), f_rows(:,4), ...
-               'VariableNames', {'Animal','Region','Block','Trial','UnitID','Count'});
-    FastUnitTrials = [FastUnitTrials; Ft]; %#ok<AGROW>
+        Ft = table( repmat(string(animal), size(f_rows,1),1), ...
+                    repmat(string(regions{i}), size(f_rows,1),1), ...
+                    f_rows(:,1), f_rows(:,2), f_rows(:,3), f_rows(:,4), ...
+                    'VariableNames', {'Animal','Region','Block','Trial','UnitID','Count'});
+        FastUnitTrials = [FastUnitTrials; Ft]; %#ok<AGROW>
 
-    % ---- UNFILTERED: per unit per trial ----
-    u_rows = [];
-    for b = 1:3
-        trList = Blocks{b}(:)';
-        for tr = trList
-            for u = 1:numel(unitIDs)
-                c = trialCounts(u,tr);
-                u_rows = [u_rows; b, tr, unitIDs(u), c]; %#ok<AGROW>
+        % ---- UNFILTERED: per unit per trial ----
+        u_rows = [];
+        for b = 1:3
+            trList = Blocks{b}(:)';
+            for tr = trList
+                for u = 1:numel(unitIDs)
+                    c = trialCounts(u,tr);
+                    u_rows = [u_rows; b, tr, unitIDs(u), c]; %#ok<AGROW>
+                end
             end
         end
+        Ut = table( repmat(string(animal), size(u_rows,1),1), ...
+                    repmat(string(regions{i}), size(u_rows,1),1), ...
+                    u_rows(:,1), u_rows(:,2), u_rows(:,3), u_rows(:,4), ...
+                    'VariableNames', {'Animal','Region','Block','Trial','UnitID','Count'});
+        UnfUnitTrials = [UnfUnitTrials; Ut]; %#ok<AGROW>
     end
-    Ut = table(repmat(string(animal), size(u_rows,1),1), ...
-               repmat(string(regions{i}), size(u_rows,1),1), ...
-               u_rows(:,1), u_rows(:,2), u_rows(:,3), u_rows(:,4), ...
-               'VariableNames', {'Animal','Region','Block','Trial','UnitID','Count'});
-    UnfUnitTrials = [UnfUnitTrials; Ut]; %#ok<AGROW>
+
+    % --- per-animal summaries ---
+    FastSummaryWide_one = make_wide(FastUnitTrials);
+    UnfSummaryWide_one  = make_wide(UnfUnitTrials);
+
+    % --- build RawData with one table per unit (Trial x Count) ---
+    RawData.Fast = struct();
+    RawData.Unfiltered = struct();
+
+    % FAST units
+    uFast = unique(FastUnitTrials.UnitID);
+    for k = 1:numel(uFast)
+        u = uFast(k);
+        sub = FastUnitTrials(FastUnitTrials.UnitID==u, {'Trial','Count'});
+        RawData.Fast.(sprintf('Unit_%03d', u)) = sortrows(sub,'Trial');
+    end
+    % UNF units
+    uUnf = unique(UnfUnitTrials.UnitID);
+    for k = 1:numel(uUnf)
+        u = uUnf(k);
+        sub = UnfUnitTrials(UnfUnitTrials.UnitID==u, {'Trial','Count'});
+        RawData.Unfiltered.(sprintf('Unit_%03d', u)) = sortrows(sub,'Trial');
+    end
+
+    % --- save per-animal structure ---
+    SummaryStruct = struct( ...
+        'Animal',            animal, ...
+        'Folder',            root, ...
+        'FastSummary',       FastSummaryWide_one, ...
+        'UnfilteredSummary', UnfSummaryWide_one, ...
+        'RawData',           RawData ...
+    );
+    outMat = fullfile(root, sprintf('%s_PerUnitSummary.mat', animal));
+    save(outMat, 'SummaryStruct', '-v7.3');
+    fprintf('\nSaved structured summary to:\n  %s\n', outMat);
+
+    % --- accumulate to outputs (across animals) ---
+    FastSummaryWide = [FastSummaryWide; FastSummaryWide_one]; %#ok<AGROW>
+    UnfSummaryWide  = [UnfSummaryWide;  UnfSummaryWide_one];  %#ok<AGROW>
+end
 end
 
-%% --- Create per-unit wide summaries ---
-FastSummaryWide = make_wide(FastUnitTrials);
-UnfSummaryWide  = make_wide(UnfUnitTrials);
-
-%% --- Build RawData with one table per unit (Trial x Count) ---
-RawData.Fast = struct();
-RawData.Unfiltered = struct();
-
-% ---- FAST ----
-uFast = unique(FastUnitTrials.UnitID);
-for k = 1:numel(uFast)
-    u = uFast(k);
-    sub = FastUnitTrials(FastUnitTrials.UnitID==u, {'Trial','Count'});
-    sub = sortrows(sub, 'Trial');
-    RawData.Fast.(sprintf('Unit_%03d', u)) = sub;  % table with Trial, Count
+%% -------- helper: multi-select directory picker --------
+function roots = pick_vr_dirs()
+% Returns cell array of selected directories (multi-select). Falls back to single uigetdir loop.
+roots = {};
+try
+    import javax.swing.JFileChooser
+    jfc = JFileChooser(pwd);
+    jfc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+    jfc.setMultiSelectionEnabled(true);
+    status = jfc.showOpenDialog([]);
+    if status == JFileChooser.APPROVE_OPTION
+        files = jfc.getSelectedFiles();
+        for k = 1:numel(files)
+            roots{end+1} = char(files(k).getAbsolutePath()); %#ok<AGROW>
+        end
+    end
+catch
+    % Fallback: repeated uigetdir until user cancels
+    while true
+        d = uigetdir(pwd, 'Select VR## folder (Cancel to finish)');
+        if isequal(d,0), break; end
+        roots{end+1} = d; %#ok<AGROW>
+        % Ask whether to add another? (skip to keep it minimal)
+    end
+end
+roots = unique(roots); % de-dup
 end
 
-% ---- UNFILTERED ----
-uUnf = unique(UnfUnitTrials.UnitID);
-for k = 1:numel(uUnf)
-    u = uUnf(k);
-    sub = UnfUnitTrials(UnfUnitTrials.UnitID==u, {'Trial','Count'});
-    sub = sortrows(sub, 'Trial');
-    RawData.Unfiltered.(sprintf('Unit_%03d', u)) = sub;  % table with Trial, Count
-end
-
-% --- Combine and save ---
-SummaryStruct = struct( ...
-    'Animal',            animal, ...
-    'Folder',            root, ...
-    'FastSummary',       FastSummaryWide, ...
-    'UnfilteredSummary', UnfSummaryWide, ...
-    'RawData',           RawData ...
-);
-
-outMat = fullfile(root, sprintf('%s_PerUnitSummary.mat', animal));
-save(outMat, 'SummaryStruct', '-v7.3');
-fprintf('\nSaved structured summary to:\n  %s\n', outMat);
-
-
-%% --- Combine everything into one structure and save ---
-SummaryStruct = struct( ...
-    'Animal',            animal, ...
-    'Folder',            root, ...
-    'FastSummary',       FastSummaryWide, ...
-    'UnfilteredSummary', UnfSummaryWide, ...
-    'RawData',           RawData ...
-);
-
-outMat = fullfile(root, sprintf('%s_PerUnitSummary.mat', animal));
-save(outMat, 'SummaryStruct', '-v7.3');  % v7.3 allows large nested structures
-fprintf('\nSaved structured summary to:\n  %s\n', outMat);
-end
 
 %% ===================== Helper =====================
 function SummaryWide = make_wide(Tin)
