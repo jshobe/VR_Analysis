@@ -36,7 +36,7 @@ p = inputParser;
 addParameter(p, 'BaseFolder', 'Z:\Justin\VR mice', @(s)ischar(s)||isstring(s));
 addParameter(p, 'AnimalFolder', '', @(s)ischar(s)||isstring(s));
 addParameter(p, 'Regions', {'PPC','VC'}, @iscell);
-addParameter(p, 'Blocks', {12:174, 178:337, 341:520}, @iscell);
+addParameter(p, 'Blocks', {40:174, 178:337, 341:501}, @iscell);
 addParameter(p, 'Overwrite', false, @islogical);
 addParameter(p, 'SaveIntermediates', true, @islogical);
 addParameter(p, 'FiguresVisible', 'off', @ischar);
