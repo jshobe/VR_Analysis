@@ -35,7 +35,7 @@ figure; plot(CSVdiff); hold on; plot(RHDdiff); hold off; legend('CSV','RHD')
 %samples. Also check the end for very high values and delete
 
 %Enter max delay%Manually find max delay and input below
-del_max=65;
+del_max=67;
 
 %%STEP#2 - only trims if CSVtable  is too long%%
 %Remove tail on CVSenc and non-matching 

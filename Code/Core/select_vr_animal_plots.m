@@ -48,8 +48,8 @@ addParameter(p, 'ShowTrialIDs', false, @islogical);
 addParameter(p, 'RasterMarkerSize', 2, @(v)isnumeric(v)&&isscalar(v)&&v>0);
 addParameter(p, 'SpeedThresh', 2.5, @(x)isnumeric(x)&&isscalar(x)&&x>=0);
 addParameter(p, 'UseMedianSpeedMask', false, @(x)islogical(x)&&isscalar(x));  % NEW
-addParameter(p, 'MakeLegacyPlots', false, @islogical);
-addParameter(p, 'SaveFIGs', false, @islogical);
+addParameter(p, 'MakeLegacyPlots', true, @islogical);
+addParameter(p, 'SaveFIGs', true, @islogical);
 addParameter(p, 'FIGDir', '', @(s)ischar(s)||isstring(s));
 addParameter(p, 'SaveOccupancyMaps', true, @islogical);                      % NEW
 addParameter(p, 'OccupancyPDFName', 'Occupancy_Maps.pdf', @(s)ischar(s)||isstring(s));  % NEW

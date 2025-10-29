@@ -1,7 +1,9 @@
-function [FastSummaryWide, UnfSummaryWide] = extra_filter()
+function [FastSummaryWide, UnfSummaryWide] = extra_filter2()
 % EXTRA_FILTER (multi-animal)
 % Multi-select VR## folders; build and save per-unit summaries for each animal.
 % Returns concatenated Fast/Unfiltered summary tables across all selected animals.
+% Also saves a cohort-wide MAT in the base VR mice folder:
+%   <BASE>\AllVR_PerUnitSummary.mat
 
 %% --- pick one or more VR## folders ---
 roots = pick_vr_dirs();
@@ -16,10 +18,18 @@ for aidx = 1:numel(roots)
     root = roots{aidx};
     [~, animal] = fileparts(root);
 
-    regions = {'PPC','VC'};
+    
     FastUnitTrials = table();   % Animal, Region, Block, Trial, UnitID, Count
     UnfUnitTrials  = table();
 
+    if isfolder(fullfile(root, 'PPC')) && isfolder(fullfile(root, 'VC')) % if both VC and PPC
+        regions = {'PPC','VC'};
+    elseif isfolder(fullfile(root, 'PPC'))
+        regions = {'PPC'};
+    elseif isfolder(fullfile(root, 'VC'))
+        regions = {'VC'};
+    end
+    
     % -------- per region load --------
     for i = 1:numel(regions)
         region_folder = fullfile(root, regions{i});
@@ -130,11 +140,24 @@ for aidx = 1:numel(roots)
     FastSummaryWide = [FastSummaryWide; FastSummaryWide_one]; %#ok<AGROW>
     UnfSummaryWide  = [UnfSummaryWide;  UnfSummaryWide_one];  %#ok<AGROW>
 end
+
+%% --- cohort-wide save in base VR mice folder ---
+cohort_dir = common_parent_dir(roots);                 % deepest common parent
+animal_names = arrayfun(@(p) base_name(roots{p}), 1:numel(roots), 'UniformOutput', false);
+
+CohortStruct = struct( ...
+    'CohortFolder',     cohort_dir, ...
+    'Animals',          string(animal_names), ...
+    'FastSummaryWide',  FastSummaryWide, ...
+    'UnfSummaryWide',   UnfSummaryWide ...
+);
+cohort_mat = fullfile(cohort_dir, 'AllVR_PerUnitSummary.mat');
+save(cohort_mat, 'CohortStruct', '-v7.3');
+fprintf('\nSaved cohort summary to:\n  %s\n', cohort_mat);
 end
 
 %% -------- helper: multi-select directory picker --------
 function roots = pick_vr_dirs()
-% Returns cell array of selected directories (multi-select). Falls back to single uigetdir loop.
 roots = {};
 try
     import javax.swing.JFileChooser
@@ -149,48 +172,36 @@ try
         end
     end
 catch
-    % Fallback: repeated uigetdir until user cancels
     while true
         d = uigetdir(pwd, 'Select VR## folder (Cancel to finish)');
         if isequal(d,0), break; end
         roots{end+1} = d; %#ok<AGROW>
-        % Ask whether to add another? (skip to keep it minimal)
     end
 end
-roots = unique(roots); % de-dup
+roots = unique(roots);
 end
-
 
 %% ===================== Helper =====================
 function SummaryWide = make_wide(Tin)
-% Tin columns: Animal, Region, UnitID, Block, Trial, Count
 Tin = sortrows(Tin, {'Animal','Region','UnitID','Block','Trial'});
-
 blocks = unique(Tin.Block);
-if numel(blocks) ~= 3
-    error('Expected exactly 3 blocks, found %d', numel(blocks));
-end
+if numel(blocks) ~= 3, error('Expected exactly 3 blocks, found %d', numel(blocks)); end
 
-% per (Animal,Region,UnitID,Block) stats
 G = findgroups(Tin.Animal, Tin.Region, Tin.UnitID, Tin.Block);
-
 A = splitapply(@(x)x(1), Tin.Animal, G);
 R = splitapply(@(x)x(1), Tin.Region, G);
 U = splitapply(@(x)x(1), Tin.UnitID, G);
 B = splitapply(@(x)x(1), Tin.Block,  G);
-
 TotalSpikes    = splitapply(@sum,  Tin.Count, G);
 SpikesPerTrial = splitapply(@mean, Tin.Count, G);
 
 Tstat = table(A,R,U,B,TotalSpikes,SpikesPerTrial, ...
     'VariableNames', {'Animal','Region','UnitID','Block','TotalSpikes','SpikesPerTrial'});
 
-% one row per unit
 units = unique(Tstat(:,{'Animal','Region','UnitID'}),'rows');
 nU = height(units);
 BlockTotals = nan(nU,3);
 BlockMeans  = nan(nU,3);
-
 for b = 1:3
     ix = (Tstat.Block == b);
     if any(ix)
@@ -200,7 +211,6 @@ for b = 1:3
     end
 end
 
-% assemble wide table
 SummaryWide = units;
 SummaryWide.Block1_total_spikes = BlockTotals(:,1);
 SummaryWide.Block2_total_spikes = BlockTotals(:,2);
@@ -212,22 +222,34 @@ SummaryWide.Block3_spikes_per_trial = BlockMeans(:,3);
 V = [SummaryWide.Block1_spikes_per_trial, ...
      SummaryWide.Block2_spikes_per_trial, ...
      SummaryWide.Block3_spikes_per_trial];
-
-% Basic stats across the 3 blocks
 SummaryWide.Mean_spikes_per_trial_3blocks = mean(V,2,'omitnan');
 SummaryWide.Min_spikes_per_trial_3blocks  = min(V,[],2,'omitnan');
 SummaryWide.Max_spikes_per_trial_3blocks  = max(V,[],2,'omitnan');
-
-% Handle division by zero or NaN safely for ratio
 ratio = SummaryWide.Max_spikes_per_trial_3blocks ./ SummaryWide.Min_spikes_per_trial_3blocks;
-ratio(~isfinite(ratio)) = NaN;   % avoid Inf or NaN errors
+ratio(~isfinite(ratio)) = NaN;
 SummaryWide.Ratio_max_to_min_3blocks = ratio;
 
-% Reorder columns for final output
 SummaryWide = SummaryWide(:,{'Animal','Region','UnitID', ...
     'Block1_total_spikes','Block2_total_spikes','Block3_total_spikes', ...
     'Block1_spikes_per_trial','Block2_spikes_per_trial','Block3_spikes_per_trial', ...
     'Mean_spikes_per_trial_3blocks','Min_spikes_per_trial_3blocks', ...
     'Max_spikes_per_trial_3blocks','Ratio_max_to_min_3blocks'});
+end
 
+%% -------- tiny helpers for cohort save --------
+function d = common_parent_dir(paths)
+sp = cellfun(@(p) strsplit(char(p), filesep), paths, 'UniformOutput', false);
+minlen = min(cellfun(@numel, sp));
+k = 1;
+while k <= minlen
+    tokens = cellfun(@(c) c{k}, sp, 'UniformOutput', false);
+    if ~all(strcmp(tokens{1}, tokens)), break; end
+    k = k + 1;
+end
+d = strjoin(sp{1}(1:k-1), filesep);
+if isempty(d), d = filesep; end
+end
+
+function name = base_name(pathstr)
+[~, name] = fileparts(pathstr);
 end
