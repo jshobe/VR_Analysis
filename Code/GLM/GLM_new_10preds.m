@@ -1,0 +1,361 @@
+%% GLM_from_MasterTable_ALLBLOCKS_PAR_V3.m
+% Parallel GLM for ALL 3 blocks using MasterTable_VR.
+% - Supports 6 position tiles (Pos1..Pos6) + Context + objects (Chair/Drum/Star)
+% - Block 2 has no Context term in the model (padded as NaN in "Full" outputs)
+% - Outputs: legacy 5-wide [PosAgg, Context, Chair, Drum, Star] and
+%            Full 10-wide aligned as [Pos1..Pos6, Context, Chair, Drum, Star]
+% - Fits on *smoothed* X (optional) and y within 4 segments of 133 bins (total 532)
+% - QA plots for quick visual checks
+%
+% Justin VR project — updated for discrete position tiles (Gaussians)
+
+clearvars; clc;
+
+%% --- Constants -----------------------------------------------------------
+SEG_LEN      = 133;         % bins per segment (4 * 133 = 532)
+TOTAL_BINS   = 4 * SEG_LEN;
+SMOOTH_X     = false;        % smooth predictors used in GLM
+SMOOTH_Y     = false;        % smooth response used in GLM
+SM_METHOD    = 'gaussian';  % smoothdata method
+SM_WINDOW    = 3;           % smoothdata window length (bins)
+PLOT_QA      = true;        % set false to skip plots entirely
+QA_UNITS     = [118 42 7];          % e.g., [118 42 7]; [] => pick random 3
+RNG_SEED     = 13;          % for reproducibility of QA unit picks
+
+%% --- Locate & load MasterTable_VR ---------------------------------------
+% Adjust base_dir if needed
+base_dir = 'Z:\Justin\VR mice';
+[matfile, matpath] = uigetfile(fullfile(base_dir, '*.mat'), ...
+    'Select a MasterTable MAT (contains variable "MasterTable_VR")');
+assert(~isequal(matfile,0), 'No file selected.');
+
+S = load(fullfile(matpath, matfile), 'MasterTable_VR');
+assert(isfield(S,'MasterTable_VR'), 'Selected file missing variable "MasterTable_VR".');
+MasterTable_VR = S.MasterTable_VR;
+
+needCols = {'Animal','FRxTTxBlock'};
+assert(all(ismember(needCols, MasterTable_VR.Properties.VariableNames)), ...
+    'MasterTable_VR must contain: %s', strjoin(needCols, ', '));
+
+Animals = string(MasterTable_VR.Animal);
+FRblk   = MasterTable_VR.FRxTTxBlock;   % cell: n×3, each {1..6} => 133-long segments
+n       = height(MasterTable_VR);
+
+%% --- Predictor files (UPDATE PATHS if names differ) ----------------------
+% Each file must be 532×K (K=10 for B1+3; K=9 or 10 for B2; columns can include Context in B2 but it will be ignored)
+fn_pred.odd.b13  = fullfile(base_dir, 'Predictors_Odd_Block1+3.xlsx');   % expects Pos1..Pos6, Context, Chair, Drum, Star
+fn_pred.even.b13 = fullfile(base_dir, 'Predictors_Even_Block1+3.xlsx');
+fn_pred.odd.b2   = fullfile(base_dir, 'Predictors_Odd_Block2.xlsx');     % expects Pos1..Pos6, (Context optional), Chair, Drum, Star
+fn_pred.even.b2  = fullfile(base_dir, 'Predictors_Even_Block2.xlsx');
+
+pos6 = "Pos" + string(1:6);
+wanted_b13 = [pos6, "Context", "Chair", "Drum", "Star"];   % 6 + 1 + 3 = 10
+wanted_b2  = [pos6, "Chair", "Drum", "Star"];              % 6 + 3 = 9
+
+% --- Read & validate
+T_odd_b13  = readtable(fn_pred.odd.b13);
+T_even_b13 = readtable(fn_pred.even.b13);
+assert(all(ismember(wanted_b13, T_odd_b13.Properties.VariableNames)),  'Odd B1+3 missing columns.');
+assert(all(ismember(wanted_b13, T_even_b13.Properties.VariableNames)), 'Even B1+3 missing columns.');
+T_odd_b13  = T_odd_b13(:,  wanted_b13);
+T_even_b13 = T_even_b13(:, wanted_b13);
+
+T_odd_b2   = readtable(fn_pred.odd.b2);
+T_even_b2  = readtable(fn_pred.even.b2);
+% For B2 we allow Context to exist but we don't use it; we only require the 9 columns below.
+assert(all(ismember(wanted_b2,  T_odd_b2.Properties.VariableNames)),  'Odd B2 missing required columns.');
+assert(all(ismember(wanted_b2,  T_even_b2.Properties.VariableNames)), 'Even B2 missing required columns.');
+T_odd_b2   = T_odd_b2(:,  wanted_b2);
+T_even_b2  = T_even_b2(:, wanted_b2);
+
+X_odd_b13  = table2array(T_odd_b13);     % 532×10: [Pos1..Pos6 Ctx Chair Drum Star]
+X_even_b13 = table2array(T_even_b13);    % 532×10
+X_odd_b2   = table2array(T_odd_b2);      % 532×9:  [Pos1..Pos6 Chair Drum Star]
+X_even_b2  = table2array(T_even_b2);     % 532×9
+
+assert(size(X_odd_b13,1)==TOTAL_BINS && size(X_even_b13,1)==TOTAL_BINS && ...
+       size(X_odd_b2,1)==TOTAL_BINS  && size(X_even_b2,1)==TOTAL_BINS, ...
+       'Predictor files must have %d rows.', TOTAL_BINS);
+
+%% --- Storage -------------------------------------------------------------
+Intercept      = nan(n,3);
+Dev            = nan(n,3);
+
+Coeffs         = cell(n,3);   % legacy 5-wide  [PosAgg, Context, Chair, Drum, Star]
+Pvals          = cell(n,3);
+
+CoeffsFull     = cell(n,3);   % full 10-wide  [Pos1..Pos6, Context, Chair, Drum, Star] (Context=NaN for B2)
+PvalsFull      = cell(n,3);
+
+%% --- Parallel pool -------------------------------------------------------
+if isempty(gcp('nocreate')), parpool; end
+
+%% --- TT mapping per block (confirm with your design) ---------------------
+% Each block selects which 4 of the 6 time-tracks get stacked (1..6)
+TTmap = { [1 2 3 4], [1 2 5 6], [1 2 3 4] };
+
+%% --- Main parallel loop --------------------------------------------------
+iff = @(cond,a,b) cond.*a + (~cond).*b;
+
+parfor i = 1:n
+    try
+        % odd/even by animal ID number
+        tok = regexp(Animals(i), '(\d+)', 'tokens', 'once');
+        if isempty(tok), continue; end
+        isOdd = mod(str2double(tok{1}),2)==1;
+
+        for blk = 1:3
+            % ---------- Build y (4×133 stacking) ----------
+            Fblk_i = FRblk{i, blk};
+            if ~iscell(Fblk_i) || numel(Fblk_i) < 6, continue; end
+            ti = TTmap{blk};
+            y_raw  = zeros(TOTAL_BINS,1); ok = true;
+            for k = 1:4
+                seg = Fblk_i{ti(k)};
+                if ~isnumeric(seg) || numel(seg)~=SEG_LEN, ok=false; break; end
+                y_raw((k-1)*SEG_LEN+(1:SEG_LEN)) = seg(:);
+            end
+            if ~ok, continue; end
+
+            % ---------- Pick predictors (raw) ----------
+            if blk == 2
+                X_raw = iff(isOdd, X_odd_b2,  X_even_b2);       % 532×9:  [Pos1..Pos6 Chair Drum Star]
+                predNames = [pos6, "Chair","Drum","Star"];
+            else
+                X_raw = iff(isOdd, X_odd_b13, X_even_b13);      % 532×10: [Pos1..Pos6 Ctx Chair Drum Star]
+                predNames = [pos6, "Context","Chair","Drum","Star"];
+            end
+
+            % ---------- Optional smoothing for GLM inputs ----------
+            X_fit = X_raw;
+            if SMOOTH_X
+                for c = 1:size(X_fit,2)
+                    X_fit(:,c) = smooth_by_segments(X_fit(:,c), SEG_LEN, SM_METHOD, SM_WINDOW);
+                end
+            end
+            y_fit = y_raw;
+            if SMOOTH_Y
+                y_fit = smooth_by_segments(y_fit, SEG_LEN, SM_METHOD, SM_WINDOW);
+            end
+
+            % ---------- Safeguards ----------
+            if any(~isfinite(y_fit)) || any(~isfinite(X_fit(:)))
+                continue
+            end
+
+            % ---------- GLM fit (Gaussian identity) ----------
+            [b, d, stats] = glmfit(X_fit, y_fit, 'normal','link','identity','constant','on');
+            Intercept(i,blk) = b(1);
+            Dev(i,blk)       = d;
+
+            % ---------- Split coefficients (exclude intercept) ----------
+            bw = b(2:end);
+            pp = nan(size(bw));
+            if isfield(stats,'p'), pp = stats.p(2:end); end
+
+            if blk == 2
+                % Layout: [Pos1..Pos6, Chair, Drum, Star]  (9)
+                b_pos  = bw(1:6);
+                b_obj  = bw(7:9);
+                p_pos  = pp(1:6);
+                p_obj  = pp(7:9);
+
+                % Legacy 5-wide: [PosAgg, Context=NaN, Chair, Drum, Star]
+                Coeffs{i,blk} = [sum(b_pos), NaN, b_obj(:)'];
+                Pvals{i,blk}  = [mean(p_pos,'omitnan'), NaN, p_obj(:)'];
+
+                % Full 10-wide aligned: [Pos1..Pos6, Context(=NaN), Chair, Drum, Star]
+                CoeffsFull{i,blk} = [b_pos(:)' NaN b_obj(:)'];
+                PvalsFull{i,blk}  = [p_pos(:)' NaN p_obj(:)'];
+            else
+                % Layout: [Pos1..Pos6, Context, Chair, Drum, Star] (10)
+                b_pos  = bw(1:6);
+                b_ctx  = bw(7);
+                b_obj  = bw(8:10);
+                p_pos  = pp(1:6);
+                p_ctx  = pp(7);
+                p_obj  = pp(8:10);
+
+                % Legacy 5-wide
+                Coeffs{i,blk} = [sum(b_pos), b_ctx, b_obj(:)'];
+                Pvals{i,blk}  = [mean(p_pos,'omitnan'), p_ctx, p_obj(:)'];
+
+                % Full 10-wide
+                CoeffsFull{i,blk} = [b_pos(:)' b_ctx b_obj(:)'];
+                PvalsFull{i,blk}  = [p_pos(:)' p_ctx p_obj(:)'];
+            end
+        end
+    catch
+        % optional logging per unit
+    end
+end
+
+%% --- Attach outputs to table --------------------------------------------
+for blk = 1:3
+    MasterTable_VR.(sprintf('GLM_Block%d_Intercept', blk)) = Intercept(:,blk);
+    MasterTable_VR.(sprintf('GLM_Block%d_Coeffs',    blk)) = Coeffs(:,blk);      % legacy 5-wide
+    MasterTable_VR.(sprintf('GLM_Block%d_pvals',     blk)) = Pvals(:,blk);
+    MasterTable_VR.(sprintf('GLM_Block%d_Dev',       blk)) = Dev(:,blk);
+
+    % full 10-wide aligned as [Pos1..Pos6, Context, Chair, Drum, Star]
+    MasterTable_VR.(sprintf('GLM_Block%d_CoeffsFull', blk)) = CoeffsFull(:,blk);
+    MasterTable_VR.(sprintf('GLM_Block%d_pvalsFull',  blk)) = PvalsFull(:,blk);
+end
+
+%% --- Save ----------------------------------------------------------------
+[outfile, outpath] = uiputfile(fullfile(matpath, strrep(matfile,'.mat','_GLM_V3.mat')), ...
+    'Save updated MasterTable_VR with GLM fields');
+if ~isequal(outfile,0)
+    MasterTable_VR_GLM = MasterTable_VR; %#ok<NASGU>
+    save(fullfile(outpath,outfile), 'MasterTable_VR_GLM','-v7.3');
+    fprintf('Saved: %s\n', fullfile(outpath,outfile));
+end
+
+%% --- QA plots: one figure per unit, per-block panels --------------------
+if PLOT_QA
+    rng(RNG_SEED);
+    if isempty(QA_UNITS), QA_UNITS = randperm(n, min(3,n)); end
+
+    POS_LW_THIN   = 0.8;   % position tiles thinner
+    OTHER_LW_THICK= 1.6;   % Context/Chair/Drum/Star thicker
+    RAW_LW        = 0.5;
+
+    for ui = 1:numel(QA_UNITS)
+        i = QA_UNITS(ui);
+        fig = figure('Name', sprintf('QA Unit %d', i), 'Color','w');
+        tl  = tiledlayout(3,2,'TileSpacing','compact','Padding','compact'); % 3 blocks × [pred,rate]
+
+        pred_axes = gobjects(0);
+        rate_axes = gobjects(0);
+        all_axes  = gobjects(0);
+
+        % odd/even for this unit
+        tok   = regexp(Animals(i), '(\d+)', 'tokens', 'once');
+        isOdd = ~isempty(tok) && mod(str2double(tok{1}),2)==1;
+
+        for blk = 1:3
+            % ------------ y (raw & smoothed) ------------
+            Fblk_i = FRblk{i, blk};
+            if ~iscell(Fblk_i) || numel(Fblk_i) < 6, continue; end
+            ti    = TTmap{blk};
+            y_raw = zeros(TOTAL_BINS,1); ok = true;
+            for k = 1:4
+                seg = Fblk_i{ti(k)};
+                if ~isnumeric(seg) || numel(seg)~=SEG_LEN, ok=false; break; end
+                y_raw((k-1)*SEG_LEN+(1:SEG_LEN)) = seg(:);
+            end
+            if ~ok, continue; end
+            y_sm = y_raw;
+            if SMOOTH_Y, y_sm = smooth_by_segments(y_raw, SEG_LEN, SM_METHOD, SM_WINDOW); end
+
+            % ------------ predictors for this block ------------
+            if blk == 2
+                X_raw     = iff(isOdd, X_odd_b2,  X_even_b2);        % 532×9 : [Pos1..Pos6 Chair Drum Star]
+                predNames = [pos6, "Chair","Drum","Star"];           % 9 names
+                idx_full  = [1:6, 8:10];                             % map into 10-wide Full (skip Context slot)
+            else
+                X_raw     = iff(isOdd, X_odd_b13, X_even_b13);       % 532×10: [Pos1..Pos6 Context Chair Drum Star]
+                predNames = [pos6, "Context","Chair","Drum","Star"]; % 10 names
+                idx_full  = 1:10;
+            end
+            X_sm = X_raw;
+            if SMOOTH_X
+                for c = 1:size(X_sm,2)
+                    X_sm(:,c) = smooth_by_segments(X_sm(:,c), SEG_LEN, SM_METHOD, SM_WINDOW);
+                end
+            end
+
+            % ------------ TOP: predictors (pos thin, others thick) ------------
+            ax1 = nexttile(tl);
+            hold(ax1,'on');
+            C = size(X_sm,2);
+            for c = 1:C
+                isPos   = (c <= 6);
+                lw_raw  = RAW_LW;
+                lw_main = isPos * POS_LW_THIN + (~isPos) * OTHER_LW_THICK;
+                plot(ax1, X_raw(:,c), ':', 'LineWidth', lw_raw);
+                plot(ax1, X_sm(:,c),  '-', 'LineWidth', lw_main);
+            end
+            title(ax1, sprintf('Unit %d – Block %d predictors', i, blk));
+            xlabel(ax1, 'Time (bins)'); ylabel(ax1, 'Predictor value');
+            legend(ax1, cellstr(predNames), 'Location','eastoutside');
+            box(ax1,'on'); hold(ax1,'off');
+
+% ------------ BOTTOM: rate + GLM fit (consistent with fit) ------------
+ax2 = nexttile(tl);
+plot(ax2, y_raw, ':', 'Color', [0.6 0.6 0.6], 'LineWidth', 0.8); hold(ax2,'on');
+plot(ax2, y_sm,  '-', 'Color', [0.3 0.3 0.3], 'LineWidth', 1.2);
+
+b0    = Intercept(i,blk);
+bfull = CoeffsFull{i,blk};   % 10-wide: [Pos1..Pos6, Context, Chair, Drum, Star] (Context=NaN for blk 2)
+pfull = PvalsFull{i,blk};
+
+% Use the SAME X preprocessing as used for the fit
+X_for_pred = X_raw;
+if SMOOTH_X, X_for_pred = X_sm; end
+
+% Map coefficients/p-values into the exact display order (predNames)
+% Map coefficients/p-values into the exact display order (predNames)
+if blk == 2
+    % predNames = [Pos1..Pos6, Chair, Drum, Star]
+    idx_full  = [1:6, 8:10];              % skip Context slot in 10-wide storage
+    betas_use = bfull(idx_full).';        % <-- force COLUMN vector (9×1)
+    p_use     = pfull(idx_full).';        % <-- column for consistent indexing
+else
+    % predNames = [Pos1..Pos6, Context, Chair, Drum, Star]
+    idx_full  = 1:10;
+    betas_use = bfull(:);                 % 10×1 already
+    p_use     = pfull(:);
+end
+% Predicted rate using those exact betas
+y_hat = b0 + X_for_pred * betas_use;
+plot(ax2, y_hat, 'r-', 'LineWidth', 1.4);
+
+title(ax2, sprintf('Rate & GLM fit — Block %d', blk));
+xlabel(ax2, 'Time (bins)'); ylabel(ax2, 'Firing rate'); box(ax2,'on');
+
+% ------------ β / p annotation (guaranteed to match predNames) ------------
+txt = strings(numel(predNames),1);
+for c = 1:numel(predNames)
+    bc = betas_use(c);
+    pc = p_use(c);
+    if isnan(bc)
+        txt(c) = sprintf('%s: \\beta=NaN, p=NaN', predNames(c));
+    else
+        if isnan(pc), pcs = 'NaN'; else, pcs = sprintf('%.3g', pc); end
+        txt(c) = sprintf('%s: \\beta=%.3f, p=%s', predNames(c), bc, pcs);
+    end
+end
+xl = xlim(ax2); yl = ylim(ax2);
+text(ax2, xl(2), yl(2), strjoin(cellstr(txt), '\n'), ...
+    'HorizontalAlignment','right','VerticalAlignment','top', ...
+    'FontSize',8,'Interpreter','tex','BackgroundColor','w','Margin',2);
+
+        
+            % collect axes for linking
+            pred_axes(end+1) = ax1; %#ok<AGROW>
+            rate_axes(end+1) = ax2; %#ok<AGROW>
+            all_axes(end+1)  = ax1; %#ok<AGROW>
+            all_axes(end+1)  = ax2; %#ok<AGROW>
+        end
+
+        % link axes
+        if ~isempty(all_axes),  linkaxes(all_axes,  'x'); end
+        if ~isempty(pred_axes), linkaxes(pred_axes, 'y'); end
+        if ~isempty(rate_axes), linkaxes(rate_axes, 'y'); end
+    end
+end
+
+
+
+
+%% --- Helpers -------------------------------------------------------------
+iff  = @(c,a,b) (a).*(c) + (b).*(~c);  % works for numeric/logical scalars; used only for selecting arrays
+function ysm = smooth_by_segments(y, seglen, method, win)
+    ysm = y;
+    for s = 1:4
+        rng = (s-1)*seglen + (1:seglen);
+        ysm(rng) = smoothdata(y(rng), method, win);
+    end
+end
+

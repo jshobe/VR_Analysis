@@ -36,7 +36,7 @@ p = inputParser;
 addParameter(p, 'BaseFolder', 'Z:\Justin\VR mice', @(s)ischar(s)||isstring(s));
 addParameter(p, 'AnimalFolder', '', @(s)ischar(s)||isstring(s));
 addParameter(p, 'Regions', {'PPC','VC'}, @iscell);
-addParameter(p, 'Blocks', {12:174, 178:337, 341:520}, @iscell);
+addParameter(p, 'Blocks', {12:66, 67:120, 121:174, 178:230, 231:282, 283:337: 348:402, 403:450}, @iscell);
 addParameter(p, 'Overwrite', false, @islogical);
 addParameter(p, 'SaveIntermediates', true, @islogical);
 addParameter(p, 'FiguresVisible', 'off', @ischar);
@@ -48,8 +48,8 @@ addParameter(p, 'ShowTrialIDs', false, @islogical);
 addParameter(p, 'RasterMarkerSize', 2, @(v)isnumeric(v)&&isscalar(v)&&v>0);
 addParameter(p, 'SpeedThresh', 2.5, @(x)isnumeric(x)&&isscalar(x)&&x>=0);
 addParameter(p, 'UseMedianSpeedMask', false, @(x)islogical(x)&&isscalar(x));  % NEW
-addParameter(p, 'MakeLegacyPlots', false, @islogical);
-addParameter(p, 'SaveFIGs', false, @islogical);
+addParameter(p, 'MakeLegacyPlots', true, @islogical);
+addParameter(p, 'SaveFIGs', true, @islogical);
 addParameter(p, 'FIGDir', '', @(s)ischar(s)||isstring(s));
 addParameter(p, 'SaveOccupancyMaps', true, @islogical);                      % NEW
 addParameter(p, 'OccupancyPDFName', 'Occupancy_Maps.pdf', @(s)ischar(s)||isstring(s));  % NEW
