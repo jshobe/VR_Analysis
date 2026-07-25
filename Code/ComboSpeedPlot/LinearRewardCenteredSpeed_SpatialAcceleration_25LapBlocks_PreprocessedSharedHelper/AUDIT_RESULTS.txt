@@ -1,0 +1,101 @@
+QUALITY AUDIT RESULTS
+=====================
+
+Scope
+-----
+Source package audited:
+  LinearRewardCenteredSpeed_SpatialAcceleration_25LapBlocks_KinematicAuditFix
+
+New package:
+  LinearRewardCenteredSpeed_SpatialAcceleration_25LapBlocks_PreprocessedSharedHelper
+
+Preprocessing inventory from source version
+-------------------------------------------
+PRESERVED:
+  - raw event vectors remain available for reward/lick plotting
+  - wrapped and unwrapped position use cfg.track_cm
+  - first row of each constant-position plateau defines the kinematic stream
+  - 5 cm distance-window speed uses compute_window_speed.m
+  - redundant plateau rows receive NaN speed
+  - low-speed threshold is applied only after unthresholded speed is computed
+  - spatial acceleration uses unthresholded speed
+  - 3 cm spatial bins remain controlled by get_single_reward_config.m
+  - speed/acceleration curves remain grouped in 25-lap blocks
+  - first 100 complete laps remain the maximum
+  - reward-centered plotting and shared scales are unchanged
+
+INTENTIONALLY CHANGED:
+  - duplicate-position cleaning moved out of LinearSingleRewardSpeed.m
+  - cleaned rows are saved in a versioned processed MAT file
+  - both current and future analyses call compute_session_window_speed.m
+  - source SHA-256 and preprocessor version now control cache validity
+  - processed files are saved atomically and reopened for verification
+
+REMOVED FROM ACTIVE PIPELINE:
+  - reward-onset sample interpolation
+  - in-driver call to compute_kinematic_window_speed.m
+  - any second correction after canonical preprocessing
+
+Static file comparison
+----------------------
+The following files are byte-identical to the audited source package:
+  add_old_reward_location_line.m
+  build_reward_centered_speed_matrix.m
+  compute_acceleration_lap_group_curves.m
+  compute_shared_reward_centered_scales.m
+  compute_spatial_acceleration_from_speed_matrix.m
+  compute_speed_lap_group_curves.m
+  compute_window_speed.m
+  plot_reward_centered_average_acceleration.m
+  plot_reward_centered_average_speed.m
+  plot_reward_centered_trial_speed.m
+
+The new LinearSingleRewardSpeed.m:
+  - contains no call to correct_reward_speed_artifact.m
+  - contains no call to compute_kinematic_window_speed.m
+  - contains no direct call to read_vr_session_txt.m
+  - calls load_or_preprocess_single_reward_session.m
+  - calls compute_session_window_speed.m
+
+Uploaded raw-session audit
+--------------------------
+File:
+  Training_JB2_June12_2026-06-12_16_58_30.txt
+
+SHA-256:
+  10a5fec09925227fe1e0fc15aab80faf7735046bcd8583c8d925fce31f529b14
+
+Independent row audit:
+  Raw rows:                 94,584
+  Kinematic position rows:  55,379
+  Redundant position rows:  39,205
+  Redundant fraction:       41.45%
+  Event-stream rows:        39,207
+  Reward rows/onsets:       124 / 124
+  Lick rows:                38,909
+  Position wraps:           137
+  Timestamps increasing:    yes
+
+Regression design
+-----------------
+test_single_reward_preprocessing.m constructs a clean kinematic sequence and
+an event-expanded copy containing duplicate reward/lick rows. It verifies:
+  - event rows are preserved;
+  - the kinematic sequence is identical to the clean sequence;
+  - speed values at genuine position rows are unchanged;
+  - redundant rows receive NaN speed;
+  - row accounting and stored audits pass.
+
+run_single_reward_preprocessing_audit.m additionally verifies on a real file:
+  - forced rebuilding succeeds;
+  - the exact saved MAT file reopens successfully;
+  - source SHA-256 is preserved;
+  - the second load accepts the fresh cache without rebuilding;
+  - shared speed mapping passes.
+
+Environment limitation
+----------------------
+MATLAB is not installed in the packaging environment. Static inspection,
+source-file hashing, independent raw-row analysis, dependency checks, and
+package-manifest verification were completed here. Run the two included MATLAB
+audits locally before treating the new cache as final.

@@ -1,0 +1,59 @@
+function cfg = get_single_reward_config()
+
+cfg.track_cm = 480;
+cfg.binSize_cm = 3;
+
+cfg.speedWindow_cm_forPlot = 5;
+
+cfg.outerSpeedStatistic = 'mean';   % 'mean' or 'median'
+
+cfg.reward_deg = 90;
+
+cfg.minSpeed_cm_s = 1;
+cfg.useSpeedThreshold = false;
+
+cfg.smoothMeanSpeedBins = 1;
+
+cfg.usePercentileColorMax = true;
+cfg.colorMaxPercentile = 99;
+
+cfg.rewardDotSize = 10;
+cfg.lickDotSize   = 1;
+
+cfg.showRewardGuideLine = false;
+cfg.rewardGuideColor = [1 0 0];
+cfg.rewardGuideLineStyle = '-';
+cfg.rewardGuideLineWidth = 1.5;
+
+cfg.showMeanSpeedSummaryCircles = true;
+cfg.summaryCircleColor = [0.25 0.25 0.25];
+cfg.summaryCircleLineStyle = ':';
+cfg.summaryCircleLineWidth = 1.2;
+
+cfg.heatmapScale = 0.78;
+cfg.innerHoleR = 30;
+
+cfg.showOuterMeanSpeed = true;
+cfg.outerGapR = 8;
+cfg.outerAmpR = 50;
+cfg.outerLineWidth = 1;
+
+cfg.outerSpeedMin_cm_s = 20;
+cfg.outerSpeedMax_cm_s = 120;
+
+cfg.axisFontSize  = 12;
+cfg.titleFontSize = 14;
+
+cfg.anticipatoryLickWindow_deg = 30;
+cfg.anticipatoryLickColor = [1 1 1];
+
+cfg.lickDotSize = 2;           % white licks
+cfg.omissionLickDotSize = 5;   % pink licks
+
+% Spatial acceleration settings
+cfg.spatialAccelerationWindowBins = 9;   % 9 bins × 3 cm = 27 cm
+cfg.spatialAccelerationPolyOrder  = 2;
+cfg.spatialAccelerationMinPoints  = 3;
+cfg.smoothAccelerationBins        = 1;
+
+end
