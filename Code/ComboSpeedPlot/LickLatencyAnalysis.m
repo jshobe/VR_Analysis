@@ -2,12 +2,12 @@ clear; clc;
 
 % Reward-to-first-lick latency analysis for single-reward VR sessions.
 %
-% For every selected session, this script:
+% For the selected sessions, this script:
 %   1. loads the canonical processed session;
 %   2. detects complete laps from the position wrap;
 %   3. pairs each valid reward onset with the first new lick onset;
-%   4. plots reward and first-lick timing by lap; and
-%   5. plots lick latency across laps with a rolling median.
+%   4. plots one chronological reward/lick raster per session; and
+%   5. overlays every session's rolling-median latency curve.
 %
 % Omission laps are retained as gaps. Laps containing more than one reward
 % onset are flagged and excluded from latency calculations.
@@ -106,19 +106,12 @@ for f = 1:nFiles
         trialNums, ...
         cfg);
 
-    fig = plot_lick_latency( ...
-        T, ...
-        cfg, ...
-        mouseName, ...
-        sessionDate);
-
     LatencyResults(f).FileName = file{f};
     LatencyResults(f).MouseName = mouseName;
     LatencyResults(f).SessionDate = sessionDate;
     LatencyResults(f).ProcessedSessionPath = processedPath;
     LatencyResults(f).PreprocessingStatus = preprocessingStatus;
     LatencyResults(f).LatencyTable = T;
-    LatencyResults(f).Figure = fig;
 
     validLatency = T.LickLatency_s(T.HasFirstLick);
     medianLatency = median(validLatency, 'omitnan');
@@ -145,3 +138,17 @@ for f = 1:nFiles
     end
 end
 
+%% Plot all sessions together in chronological order
+latencyTables = {LatencyResults.LatencyTable};
+mouseNames = {LatencyResults.MouseName};
+sessionDates = {LatencyResults.SessionDate};
+
+fig = plot_lick_latency( ...
+    latencyTables, ...
+    cfg, ...
+    mouseNames, ...
+    sessionDates);
+
+for f = 1:nFiles
+    LatencyResults(f).Figure = fig;
+end
