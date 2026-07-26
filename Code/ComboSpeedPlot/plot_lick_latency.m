@@ -55,6 +55,41 @@ end
 validReward = T.IsRewardedLap;
 validLick = T.HasFirstLick;
 
+% Keep the event-search window independent from the display range. This
+% prevents a long search window from compressing subsecond latency changes.
+if isfield(cfg, 'latencyDisplayMax_s') && ...
+        ~isempty(cfg.latencyDisplayMax_s)
+    displayMax_s = cfg.latencyDisplayMax_s;
+
+    if ~isscalar(displayMax_s) || ...
+            ~isfinite(displayMax_s) || ...
+            displayMax_s <= 0
+        error('cfg.latencyDisplayMax_s must be a positive finite scalar.');
+    end
+else
+    if isfield(cfg, 'minimumLatencyDisplayMax_s')
+        minimumDisplayMax_s = cfg.minimumLatencyDisplayMax_s;
+    else
+        minimumDisplayMax_s = 0.5;
+    end
+
+    observedLatency = T.LickLatency_s(validLick);
+
+    if isempty(observedLatency)
+        displayMax_s = min( ...
+            cfg.maxLickLatency_s, ...
+            minimumDisplayMax_s);
+    else
+        paddedObservedMax_s = 1.15 * max(observedLatency);
+        roundedObservedMax_s = ...
+            ceil(10 * paddedObservedMax_s) / 10;
+
+        displayMax_s = min( ...
+            cfg.maxLickLatency_s, ...
+            max(minimumDisplayMax_s, roundedObservedMax_s));
+    end
+end
+
 fig = figure( ...
     'Color', 'w', ...
     'Name', sprintf('%s %s lick latency', mouseName, sessionDate), ...
@@ -106,8 +141,8 @@ xline(axRaster, 0, ':', ...
     'Color', [1 0.25 0.25], ...
     'LineWidth', 1);
 
-xPadding = 0.03 * cfg.maxLickLatency_s;
-xlim(axRaster, [-xPadding cfg.maxLickLatency_s]);
+xPadding = 0.03 * displayMax_s;
+xlim(axRaster, [-xPadding displayMax_s]);
 ylim(axRaster, [min(T.Lap) - 0.5 max(T.Lap) + 0.5]);
 
 xlabel(axRaster, 'Time from reward delivery (s)');
@@ -163,15 +198,18 @@ plot(axTrend, ...
     'LineWidth', 2);
 
 xlim(axTrend, [min(T.Lap) - 0.5 max(T.Lap) + 0.5]);
-ylim(axTrend, [0 cfg.maxLickLatency_s]);
+ylim(axTrend, [0 displayMax_s]);
 
 xlabel(axTrend, 'Lap');
 ylabel(axTrend, 'First-lick latency (s)');
 title(axTrend, sprintf( ...
-    '%d-lap rolling median; %d omissions; %d rewarded laps without a lick', ...
+    [ ...
+    '%d-lap rolling median; %d omissions; ' ...
+    '%d rewarded laps without a first lick within %.1f s'], ...
     rollingWindow, ...
     sum(T.IsOmissionLap), ...
-    sum(T.IsRewardedLap & ~T.HasFirstLick)));
+    sum(T.IsRewardedLap & ~T.HasFirstLick), ...
+    cfg.maxLickLatency_s));
 
 grid(axTrend, 'on');
 box(axTrend, 'on');
@@ -190,4 +228,3 @@ legend(axTrend, ...
     'Location', 'northeast');
 
 end
-
