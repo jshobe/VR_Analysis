@@ -70,6 +70,18 @@ rollingWindow = max(1, round(cfg.latencyRollingWindow_laps));
 displayMax_s = calculate_shared_display_max(latencyTables, cfg);
 sessionColors = lines(nSessions);
 
+rollingLatencyBySession = cell(nSessions, 1);
+for s = 1:nSessions
+    rollingLatencyBySession{s} = movmedian( ...
+        latencyTables{s}.LickLatency_s, ...
+        rollingWindow, ...
+        'omitnan');
+end
+
+trendDisplayMax_s = calculate_trend_display_max( ...
+    rollingLatencyBySession, ...
+    cfg);
+
 figWidth = min(0.98, max(0.68, 0.25 * nSessions));
 
 fig = figure( ...
@@ -108,14 +120,9 @@ curveLabels = cell(nSessions, 1);
 for s = 1:nSessions
     T = latencyTables{s};
 
-    rollingLatency = movmedian( ...
-        T.LickLatency_s, ...
-        rollingWindow, ...
-        'omitnan');
-
     curveHandles(s) = plot(axTrend, ...
         T.Lap, ...
-        rollingLatency, ...
+        rollingLatencyBySession{s}, ...
         '-', ...
         'Color', sessionColors(s, :), ...
         'LineWidth', 2);
@@ -127,7 +134,7 @@ for s = 1:nSessions
 end
 
 xlim(axTrend, [0.5 maxLap + 0.5]);
-ylim(axTrend, [0 displayMax_s]);
+ylim(axTrend, [0 trendDisplayMax_s]);
 
 xlabel(axTrend, 'Lap');
 ylabel(axTrend, 'First-lick latency (s)');
@@ -143,6 +150,54 @@ legend(axTrend, ...
     curveLabels, ...
     'Location', 'northeast', ...
     'Interpreter', 'none');
+
+end
+
+
+function trendDisplayMax_s = calculate_trend_display_max( ...
+    rollingLatencyBySession, cfg)
+
+if isfield(cfg, 'latencyTrendDisplayMax_s') && ...
+        ~isempty(cfg.latencyTrendDisplayMax_s)
+    trendDisplayMax_s = cfg.latencyTrendDisplayMax_s;
+
+    if ~isscalar(trendDisplayMax_s) || ...
+            ~isfinite(trendDisplayMax_s) || ...
+            trendDisplayMax_s <= 0
+        error( ...
+            'cfg.latencyTrendDisplayMax_s must be a positive finite scalar.');
+    end
+
+    return
+end
+
+if isfield(cfg, 'minimumLatencyTrendDisplayMax_s')
+    minimumTrendMax_s = cfg.minimumLatencyTrendDisplayMax_s;
+else
+    minimumTrendMax_s = 0.5;
+end
+
+rollingValues = [];
+
+for s = 1:numel(rollingLatencyBySession)
+    values = rollingLatencyBySession{s};
+    rollingValues = [ ...
+        rollingValues; ...
+        values(isfinite(values))]; %#ok<AGROW>
+end
+
+if isempty(rollingValues)
+    trendDisplayMax_s = min( ...
+        cfg.maxLickLatency_s, ...
+        minimumTrendMax_s);
+else
+    paddedTrendMax_s = 1.15 * max(rollingValues);
+    roundedTrendMax_s = ceil(10 * paddedTrendMax_s) / 10;
+
+    trendDisplayMax_s = min( ...
+        cfg.maxLickLatency_s, ...
+        max(minimumTrendMax_s, roundedTrendMax_s));
+end
 
 end
 
