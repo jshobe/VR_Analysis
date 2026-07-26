@@ -1,4 +1,5 @@
-clear; clc;
+function ComboPlot_SR(inputFile)
+clc;
 
 %% USER SETTINGS
 track_cm = 480;
@@ -74,15 +75,29 @@ else
 end
 
 %% Select file
-[file, path] = uigetfile(fullfile(startFolder, '*.txt'), 'Select VR session file');
+if nargin < 1 || isempty(inputFile)
+    [file, path] = uigetfile(fullfile(startFolder, '*.txt'), 'Select VR session file');
 
-if isequal(file,0)
-    error('No file selected.');
+    if isequal(file,0)
+        error('No file selected.');
+    end
+
+    fname = fullfile(path, file);
+    lastFolder = path;
+    save(settingsFile, 'lastFolder');
+else
+    if ~(ischar(inputFile) || (isstring(inputFile) && isscalar(inputFile)))
+        error('Input file path must be a character vector or string scalar.');
+    end
+
+    fname = char(inputFile);
+    if ~isfile(fname)
+        error('Input file does not exist: %s', fname);
+    end
+
+    [~, fileName, fileExt] = fileparts(fname);
+    file = [fileName, fileExt];
 end
-
-fname = fullfile(path, file);
-lastFolder = path;
-save(settingsFile, 'lastFolder');
 
 %% Parse mouse/date from filename
 [~, baseName, ~] = fileparts(file);
@@ -604,3 +619,4 @@ title([mouseName, '  ', sessionDate, ...
        'Interpreter', 'none', 'FontSize', titleFontSize);
 
 set(gca, 'FontSize', axisFontSize);
+end
