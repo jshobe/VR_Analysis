@@ -1,5 +1,12 @@
 LINEAR REWARD-CENTERED FIGURE UPDATE
 
+Canonical active pipeline
+-------------------------
+The MATLAB files stored directly in Code/ComboSpeedPlot are the canonical
+active speed-analysis pipeline. Historical duplicate package folders and ZIP
+archives are not part of the active pipeline. Deleted historical packages
+remain recoverable through Git history.
+
 Changes
 -------
 1. First 100 complete laps are divided into three groups:
