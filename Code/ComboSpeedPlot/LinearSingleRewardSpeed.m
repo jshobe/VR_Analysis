@@ -4,8 +4,8 @@ clear; clc;
 %
 % For each selected session:
 %   top:    lap-by-position speed heatmap
-%   middle: overall speed +/- SEM with matching 34/33/33-lap curves
-%   bottom: spatially derived signed acceleration in 34/33/33-lap groups
+%   middle: overall speed +/- SEM with three matching lap-group curves
+%   bottom: spatially derived signed acceleration in three lap groups
 %
 % Spatial acceleration is calculated after canonical preprocessed speed is binned by position:
 %   a = v * dv/dx
@@ -18,7 +18,7 @@ clear; clc;
 %   - each heatmap uses its own session-specific color scale
 %   - average-speed and acceleration panels can retain shared scales
 %
-% A maximum of the first 100 complete laps is plotted and analyzed.
+% The user selects which complete laps are plotted and analyzed.
 
 cfg = get_single_reward_config();
 
@@ -61,19 +61,9 @@ if ~isfield(cfg, 'useSharedAccelerationScale')
     cfg.useSharedAccelerationScale = cfg.useSharedSessionScales;
 end
 
-if ~isfield(cfg, 'maxLapsToPlot')
-    cfg.maxLapsToPlot = 100;
-end
-
 % Prevent small reward-delivery jitter from being treated as a true shift.
 if ~isfield(cfg, 'rewardShiftTolerance_deg')
     cfg.rewardShiftTolerance_deg = 5;
-end
-
-% Speed and acceleration use the same three consecutive lap groups.
-% With 100 plotted laps, these are 1-34, 35-67, and 68-100.
-if ~isfield(cfg, 'lapGroupSizes')
-    cfg.lapGroupSizes = [34 33 33];
 end
 
 if ~isfield(cfg, 'showSpeedLapBlockCurves')
@@ -81,7 +71,7 @@ if ~isfield(cfg, 'showSpeedLapBlockCurves')
 end
 
 % Purple, blue, and green: deliberately no yellow curve.
-nExpectedGroups = numel(cfg.lapGroupSizes);
+nExpectedGroups = 3;
 defaultGroupColors = [ ...
     0.25 0.10 0.65; ...  % purple
     0.00 0.45 0.74; ...  % blue
@@ -234,9 +224,8 @@ for f = 1:nFiles
         continue
     end
 
-    % Use the first 100 complete laps, or all laps when fewer than 100 exist.
-    nTrialsPlotted = min(nTrialsTotal, cfg.maxLapsToPlot);
-    trialNums = 1:nTrialsPlotted;
+    [trialNums, trialLabel] = select_laps_to_plot(nTrialsTotal);
+    nTrialsPlotted = numel(trialNums);
 
     P = build_reward_centered_speed_matrix( ...
         D, ...
@@ -246,6 +235,8 @@ for f = 1:nFiles
 
     P.nTrialsTotal = nTrialsTotal;
     P.nTrialsPlotted = nTrialsPlotted;
+    P.trialNums = trialNums(:);
+    P.trialLabel = trialLabel;
     P.fileName = file{f};
     P.preprocessingAudit = Session.Audit;
     P.speedAudit = speedAudit;
@@ -255,12 +246,11 @@ for f = 1:nFiles
     keepFile(f) = true;
 
     fprintf([ ...
-        '%s %s: plotting first %d of %d complete laps, ' ...
+        '%s %s: plotting %s, ' ...
         'reward center %.1f deg\n'], ...
         mouseName, ...
         sessionDate, ...
-        nTrialsPlotted, ...
-        nTrialsTotal, ...
+        trialLabel, ...
         P.reward_deg);
 end
 

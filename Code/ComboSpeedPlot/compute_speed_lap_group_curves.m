@@ -8,15 +8,21 @@ if ~isfield(P, 'speedMat')
 end
 
 nTrials = size(P.speedMat, 1);
-[groupStarts, groupEnds, groupSizesUsed] = ...
-    get_lap_group_ranges(nTrials, cfg);
+
+if isfield(P, 'trialNums') && numel(P.trialNums) == nTrials
+    trialNums = P.trialNums;
+else
+    trialNums = 1:nTrials;
+end
+
+[groupStarts, groupEnds, groupSizesUsed, labels] = ...
+    get_lap_group_ranges(trialNums, cfg);
 
 nGroups = numel(groupStarts);
 nBins = size(P.speedMat, 2);
 
 meanSpeed = nan(nGroups, nBins);
 semSpeed = nan(nGroups, nBins);
-labels = cell(nGroups, 1);
 
 for g = 1:nGroups
 
@@ -41,10 +47,6 @@ for g = 1:nGroups
             'omitnan');
     end
 
-    labels{g} = sprintf( ...
-        'Laps %d-%d', ...
-        groupStarts(g), ...
-        groupEnds(g));
 end
 
 colors = cfg.accelerationGroupColors;

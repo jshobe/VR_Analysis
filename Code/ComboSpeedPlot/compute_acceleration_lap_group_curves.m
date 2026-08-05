@@ -2,8 +2,7 @@ function G = compute_acceleration_lap_group_curves(P, cfg)
 % COMPUTE_ACCELERATION_LAP_GROUP_CURVES
 % Calculates signed-acceleration curves for consecutive lap groups.
 %
-% Default grouping:
-%   Laps 1-34, 35-67, and 68-100.
+% The selected laps are divided into three groups as evenly as possible.
 %
 % Optional robust outlier rejection is performed independently at each
 % spatial bin across the laps within each group. Detected values are set to
@@ -26,15 +25,21 @@ if ~isfield(cfg, 'accelerationOutlierMinLaps')
 end
 
 nTrials = size(P.accelMat, 1);
-[groupStarts, groupEnds, groupSizesUsed] = ...
-    get_lap_group_ranges(nTrials, cfg);
+
+if isfield(P, 'trialNums') && numel(P.trialNums) == nTrials
+    trialNums = P.trialNums;
+else
+    trialNums = 1:nTrials;
+end
+
+[groupStarts, groupEnds, groupSizesUsed, labels] = ...
+    get_lap_group_ranges(trialNums, cfg);
 
 nGroups = numel(groupStarts);
 nBins = size(P.accelMat, 2);
 
 meanAccel = nan(nGroups, nBins);
 semAccel = nan(nGroups, nBins);
-labels = cell(nGroups, 1);
 
 filteredAccelMat = P.accelMat;
 outlierMask = false(size(P.accelMat));
@@ -82,10 +87,6 @@ for g = 1:nGroups
             'omitnan');
     end
 
-    labels{g} = sprintf( ...
-        'Laps %d-%d', ...
-        groupStarts(g), ...
-        groupEnds(g));
 end
 
 colors = cfg.accelerationGroupColors;

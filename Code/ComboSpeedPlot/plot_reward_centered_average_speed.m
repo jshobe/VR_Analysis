@@ -85,7 +85,7 @@ else
         groupValues = G.meanSpeed(isfinite(G.meanSpeed));
         finiteValues = [ ...
             finiteValues, ...
-            groupValues(:).']; %#ok<AGROW>
+            groupValues(:).'];
     end
 
     if isempty(finiteValues)
@@ -208,7 +208,9 @@ set(ax, ...
 xlabel(ax, 'Track position');
 ylabel(ax, 'Speed (cm/s)');
 
-if isfield(P, 'nTrialsTotal') && P.nTrials < P.nTrialsTotal
+if isfield(P, 'trialLabel') && ~isempty(P.trialLabel)
+    lapCaption = P.trialLabel;
+elseif isfield(P, 'nTrialsTotal') && P.nTrials < P.nTrialsTotal
     lapCaption = sprintf( ...
         'First %d of %d laps', ...
         P.nTrials, ...

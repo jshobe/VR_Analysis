@@ -1,56 +1,52 @@
-function [groupStarts, groupEnds, groupSizesUsed] = get_lap_group_ranges(nTrials, cfg)
+function [groupStarts, groupEnds, groupSizesUsed, labels] = ...
+    get_lap_group_ranges(trialNums, ~)
 % GET_LAP_GROUP_RANGES
-% Returns consecutive lap ranges shared by speed and acceleration summaries.
+% Returns three balanced, consecutive groups of selected laps.
 %
-% Preferred configuration:
-%   cfg.lapGroupSizes = [34 33 33];
-%
-% For fewer than 100 plotted laps, the final available group is truncated.
-% For backward compatibility, cfg.accelerationLapBlockSize is used only when
-% cfg.lapGroupSizes is absent.
+% A scalar input retains compatibility with callers that provide only a lap
+% count. A vector supplies the original lap numbers used in group labels.
 
-if ~isscalar(nTrials) || ~isfinite(nTrials) || ...
-        nTrials < 1 || mod(nTrials, 1) ~= 0
-    error('nTrials must be a positive integer.');
-end
+if isscalar(trialNums)
+    nTrials = trialNums;
 
-if isfield(cfg, 'lapGroupSizes') && ~isempty(cfg.lapGroupSizes)
-    groupSizes = cfg.lapGroupSizes(:).';
-
-    if any(~isfinite(groupSizes)) || any(groupSizes < 1) || ...
-            any(mod(groupSizes, 1) ~= 0)
-        error('cfg.lapGroupSizes must contain positive integers.');
+    if ~isfinite(nTrials) || nTrials < 1 || mod(nTrials, 1) ~= 0
+        error('The lap count must be a positive integer.');
     end
 
-    % If a future configuration plots more laps than the explicitly listed
-    % groups cover, retain all remaining laps as one final group.
-    if sum(groupSizes) < nTrials
-        groupSizes(end + 1) = nTrials - sum(groupSizes);
+    trialNums = 1:nTrials;
+else
+    trialNums = trialNums(:).';
+    nTrials = numel(trialNums);
+
+    if isempty(trialNums) || any(~isfinite(trialNums)) || ...
+            any(trialNums < 1) || any(mod(trialNums, 1) ~= 0) || ...
+            any(diff(trialNums) <= 0)
+        error('trialNums must contain increasing positive integers.');
     end
-
-    groupStartsAll = [1, 1 + cumsum(groupSizes(1:end-1))];
-    groupEndsAll = cumsum(groupSizes);
-
-    keep = groupStartsAll <= nTrials;
-    groupStarts = groupStartsAll(keep);
-    groupEnds = min(groupEndsAll(keep), nTrials);
-    groupSizesUsed = groupEnds - groupStarts + 1;
-    return
 end
 
-% Legacy equal-block fallback.
-if ~isfield(cfg, 'accelerationLapBlockSize') || ...
-        ~isscalar(cfg.accelerationLapBlockSize) || ...
-        ~isfinite(cfg.accelerationLapBlockSize) || ...
-        cfg.accelerationLapBlockSize < 1 || ...
-        mod(cfg.accelerationLapBlockSize, 1) ~= 0
-    error(['Define cfg.lapGroupSizes or provide a positive integer ' ...
-           'cfg.accelerationLapBlockSize.']);
+if nTrials < 3
+    error('At least three selected laps are required for three lap groups.');
 end
 
-blockSize = cfg.accelerationLapBlockSize;
-groupStarts = 1:blockSize:nTrials;
-groupEnds = min(groupStarts + blockSize - 1, nTrials);
-groupSizesUsed = groupEnds - groupStarts + 1;
+nGroups = 3;
+baseSize = floor(nTrials / nGroups);
+nLargerGroups = mod(nTrials, nGroups);
+
+groupSizesUsed = baseSize * ones(1, nGroups);
+groupSizesUsed(1:nLargerGroups) = ...
+    groupSizesUsed(1:nLargerGroups) + 1;
+
+groupStarts = [1, 1 + cumsum(groupSizesUsed(1:end-1))];
+groupEnds = cumsum(groupSizesUsed);
+
+labels = cell(nGroups, 1);
+
+for g = 1:nGroups
+    labels{g} = sprintf( ...
+        'Laps %d-%d', ...
+        trialNums(groupStarts(g)), ...
+        trialNums(groupEnds(g)));
+end
 
 end
